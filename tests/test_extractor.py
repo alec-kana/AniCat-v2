@@ -10,6 +10,7 @@ from anicat.extractor import (
     Anime1Extractor,
     extract_access_cookies,
     parse_direct_episode_page,
+    parse_episode_number,
     parse_episode_page,
     parse_html,
     parse_season_page,
@@ -49,6 +50,7 @@ class ExtractorTests(unittest.TestCase):
         self.assertEqual(page.episode_urls, ["/1", "https://anime1.me/2"])
         self.assertEqual(page.next_url, "/page/2")
         self.assertIsNone(page.anime_name)
+        self.assertEqual(page.episode_numbers, [None, None])
 
     def test_parse_season_page_extracts_anime_name(self):
         page = parse_season_page(
@@ -59,6 +61,23 @@ class ExtractorTests(unittest.TestCase):
         )
 
         self.assertEqual(page.anime_name, "CITY THE ANIMATION")
+
+    def test_parse_season_page_extracts_episode_numbers(self):
+        page = parse_season_page(
+            """
+            <h2 class="entry-title"><a rel="bookmark" href="/15">Demo [15]</a></h2>
+            <h2 class="entry-title"><a rel="bookmark" href="/16">Demo [16]</a></h2>
+            <h2 class="entry-title"><a rel="bookmark" href="/sp">Demo [SP]</a></h2>
+            """
+        )
+
+        self.assertEqual(page.episode_numbers, [15, 16, None])
+
+    def test_parse_episode_number_extracts_trailing_bracket(self):
+        self.assertEqual(parse_episode_number("Demo Anime [07]"), 7)
+        self.assertEqual(parse_episode_number("約會大作戰 II (第二季) [01]"), 1)
+        self.assertIsNone(parse_episode_number("Demo Anime [SP]"))
+        self.assertIsNone(parse_episode_number("Demo Anime"))
 
     def test_parse_episode_page_extracts_api_request_and_title(self):
         data_apireq, title = parse_episode_page(
@@ -298,10 +317,10 @@ class ExtractorTests(unittest.TestCase):
                 "https://anime1.pw/?cat=60": """
                 <h1 class="page-title">Demo Anime</h1>
                 <h2 class="entry-title">
-                    <a href="https://anime1.pw/349" rel="bookmark">Episode 6</a>
+                    <a href="https://anime1.pw/349" rel="bookmark">Demo Anime [06]</a>
                 </h2>
                 <h2 class="entry-title">
-                    <a href="/348" rel="bookmark">Episode 5</a>
+                    <a href="/348" rel="bookmark">Demo Anime [05]</a>
                 </h2>
                 """,
             }
@@ -311,6 +330,7 @@ class ExtractorTests(unittest.TestCase):
 
         self.assertEqual(season.episode_urls, ["https://anime1.pw/349", "https://anime1.pw/348"])
         self.assertEqual(season.anime_name, "Demo Anime")
+        self.assertEqual(season.episode_numbers, [6, 5])
         self.assertEqual(client.get_calls, ["https://anime1.pw/?cat=60"])
         self.assertEqual(client.post_calls, [])
 

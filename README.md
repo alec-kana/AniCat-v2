@@ -87,11 +87,19 @@ anicat URL [URL ...] [OPTIONS]
     anicat https://anime1.me/12345,https://anime1.me/67890
     ```
 
+4. 只下載分類 / 季度中的部分集數：
+
+    ```bash
+    anicat https://anime1.me/category/your-category-slug --episodes 15-17
+    anicat https://anime1.me/category/your-category-slug --episodes 1,3,5-8
+    ```
+
 ### 常用參數
 
 | 參數 | 說明 | 預設值 |
 |---|---|---|
 | `-o`, `--output DIR` | 指定輸出資料夾（每部動畫會依 `h1.page-title` 解析出的名稱各自建立子資料夾） | `./anime1` |
+| `-e`, `--episodes SPEC` | 只下載分類/季度 URL 中指定的集數，例如 `15-17` 或 `1,3,5-8`；直接輸入的單集 URL 不受此篩選影響 | 不限制 |
 | `-c`, `--concurrency N` | 併發下載數 | `3` |
 | `--timeout SECONDS` | HTTP 讀取逾時秒數 | `30` |
 | `--connect-timeout SECONDS` | HTTP 連線逾時秒數 | `10` |

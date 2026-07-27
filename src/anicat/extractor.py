@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from http.cookies import CookieError, SimpleCookie
 from typing import Any, Protocol
 from urllib.parse import urljoin, urlparse
@@ -17,6 +17,7 @@ from .urls import ANIME1_ME_SOURCE, ANIME1_PW_SOURCE, SourceKind, source_kind
 
 ACCESS_COOKIE_NAMES = ("e", "p", "h")
 SET_COOKIE_SEPARATOR_PATTERN = re.compile(r",\s*(?=[^=;,\s]+=)")
+EPISODE_NUMBER_PATTERN = re.compile(r"\[(\d+)\]\s*$")
 LOGGER = logging.getLogger(__name__)
 PageFetcher = Callable[[str], str]
 
@@ -28,6 +29,7 @@ class SeasonPage:
     episode_urls: list[str]
     next_url: str | None
     anime_name: str | None = None
+    episode_numbers: list[int | None] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -36,6 +38,7 @@ class SeasonEpisodes:
 
     episode_urls: list[str]
     anime_name: str | None = None
+    episode_numbers: list[int | None] = field(default_factory=list)
 
 
 class EpisodeSource(Protocol):
@@ -76,10 +79,12 @@ def parse_season_page(html: str) -> SeasonPage:
 
     soup = parse_html(html)
     episode_urls: list[str] = []
+    episode_numbers: list[int | None] = []
     for anchor in soup.select("h2.entry-title a[rel='bookmark']"):
         href = anchor.get("href")
         if isinstance(href, str):
             episode_urls.append(href)
+            episode_numbers.append(parse_episode_number(anchor.get_text(" ", strip=True)))
 
     next_anchor = soup.select_one("div.nav-previous a[href]")
     next_href = next_anchor.get("href") if next_anchor else None
@@ -91,7 +96,15 @@ def parse_season_page(html: str) -> SeasonPage:
         episode_urls=episode_urls,
         next_url=next_href if isinstance(next_href, str) else None,
         anime_name=anime_name or None,
+        episode_numbers=episode_numbers,
     )
+
+
+def parse_episode_number(title: str) -> int | None:
+    """Extract the trailing bracketed episode number from a listing title."""
+
+    match = EPISODE_NUMBER_PATTERN.search(title)
+    return int(match.group(1)) if match else None
 
 
 def parse_episode_page(html: str) -> tuple[str, str]:
@@ -259,6 +272,7 @@ def collect_paginated_episode_urls(fetch_page: PageFetcher, url: str) -> SeasonE
     """Collect episode links and the anime name from a paginated WordPress-style listing."""
 
     collected: list[str] = []
+    collected_numbers: list[int | None] = []
     anime_name: str | None = None
     current_url: str | None = url
     visited: set[str] = set()
@@ -273,12 +287,17 @@ def collect_paginated_episode_urls(fetch_page: PageFetcher, url: str) -> SeasonE
         if html.strip() and not page.episode_urls:
             raise ParseError(f"season page returned no episode links: {current_url}")
         collected.extend(urljoin(current_url, item) for item in page.episode_urls)
+        collected_numbers.extend(page.episode_numbers)
         if anime_name is None:
             anime_name = page.anime_name
         # Resolve relative pagination URLs against the page that produced them.
         current_url = urljoin(current_url, page.next_url) if page.next_url else None
 
-    return SeasonEpisodes(episode_urls=collected, anime_name=anime_name)
+    return SeasonEpisodes(
+        episode_urls=collected,
+        anime_name=anime_name,
+        episode_numbers=collected_numbers,
+    )
 
 
 class Anime1MeExtractor:

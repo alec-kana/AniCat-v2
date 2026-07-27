@@ -6,6 +6,7 @@ from anicat.urls import (
     ensure_supported_url,
     is_episode_url,
     is_season_url,
+    parse_episode_selector,
     source_kind,
     split_urls,
 )
@@ -78,6 +79,17 @@ class UrlTests(unittest.TestCase):
 
     def test_dedupe_keeps_order(self):
         self.assertEqual(dedupe(["a", "b", "a", "c"]), ["a", "b", "c"])
+
+    def test_parse_episode_selector_accepts_ranges_and_lists(self):
+        self.assertEqual(parse_episode_selector("15-17"), frozenset({15, 16, 17}))
+        self.assertEqual(parse_episode_selector("1,3,5-8"), frozenset({1, 3, 5, 6, 7, 8}))
+        self.assertEqual(parse_episode_selector(" 4 "), frozenset({4}))
+        self.assertEqual(parse_episode_selector("2-2"), frozenset({2}))
+
+    def test_parse_episode_selector_rejects_invalid_specs(self):
+        for spec in ("", "0", "-1", "abc", "17-15", "1-", "-3", "1,,2"):
+            with self.assertRaises(AniCatError):
+                parse_episode_selector(spec)
 
 
 if __name__ == "__main__":
