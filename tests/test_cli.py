@@ -1,3 +1,4 @@
+import os
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
@@ -9,10 +10,12 @@ from anicat.cli import (
     EXIT_OK,
     EXIT_USAGE,
     build_parser,
+    env_flag,
     main,
     options_from_args,
     run_downloads,
 )
+from anicat.constants import PLAIN_PROGRESS_ENV_VAR
 
 
 class CliTests(unittest.TestCase):
@@ -81,9 +84,30 @@ class CliTests(unittest.TestCase):
         self.assertTrue(options_from_args(args).plain_progress)
 
     def test_plain_progress_defaults_to_false(self):
-        args = build_parser().parse_args(["https://anime1.me/1"])
+        with patch.dict("os.environ", {}, clear=False):
+            os.environ.pop(PLAIN_PROGRESS_ENV_VAR, None)
+            args = build_parser().parse_args(["https://anime1.me/1"])
 
         self.assertFalse(options_from_args(args).plain_progress)
+
+    def test_plain_progress_env_var_sets_default_on(self):
+        with patch.dict("os.environ", {PLAIN_PROGRESS_ENV_VAR: "1"}):
+            args = build_parser().parse_args(["https://anime1.me/1"])
+
+        self.assertTrue(options_from_args(args).plain_progress)
+
+    def test_env_flag_recognizes_common_truthy_spellings(self):
+        for value in ("1", "true", "True", "yes", "on"):
+            with patch.dict("os.environ", {PLAIN_PROGRESS_ENV_VAR: value}):
+                self.assertTrue(env_flag(PLAIN_PROGRESS_ENV_VAR), msg=value)
+
+    def test_env_flag_treats_unset_or_zero_as_false(self):
+        with patch.dict("os.environ", {}, clear=False):
+            os.environ.pop(PLAIN_PROGRESS_ENV_VAR, None)
+            self.assertFalse(env_flag(PLAIN_PROGRESS_ENV_VAR))
+
+        with patch.dict("os.environ", {PLAIN_PROGRESS_ENV_VAR: "0"}):
+            self.assertFalse(env_flag(PLAIN_PROGRESS_ENV_VAR))
 
     def test_plain_progress_flag_forces_plain_renderer_even_on_a_live_capable_terminal(self):
         args = build_parser().parse_args(["--plain-progress", "https://anime1.me/1"])

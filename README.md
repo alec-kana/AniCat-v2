@@ -162,6 +162,15 @@ anicat https://anime1.me/category/your-category-slug --plain-progress
 
 如果不想看到任何進度輸出，可改用 `--no-progress` 關閉。
 
+如果每次都要打 `--plain-progress` 太麻煩，可以改設定環境變數 `ANICAT_PLAIN_PROGRESS=1`，之後不加旗標也會預設開啟純文字進度：
+
+```bash
+export ANICAT_PLAIN_PROGRESS=1
+anicat https://anime1.me/category/your-category-slug
+```
+
+把 `export` 那行加到 a-shell 啟動時會載入的設定檔（例如 `~/Documents/.profile`，實際檔名依 a-shell 版本而定）即可長期生效，不需要每次手動打。
+
 ## 進階說明
 
 ### Python API
