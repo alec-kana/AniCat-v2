@@ -19,7 +19,12 @@ from .errors import AniCatError
 from .logging_config import configure_logging
 from .models import EpisodeJob, JobReport
 from .options import DownloadOptions
-from .progress import rich_download_progress
+from .progress import (
+    format_size,
+    plain_download_progress,
+    rich_download_progress,
+    supports_rich_live,
+)
 from .service import AniCatService
 from .urls import parse_episode_selector, split_urls
 
@@ -232,21 +237,10 @@ def run_downloads(
     if not options.progress:
         return service.download_many(episode_jobs)
 
-    with rich_download_progress(len(episode_jobs)) as progress:
+    progress_factory = rich_download_progress if supports_rich_live() else plain_download_progress
+    with progress_factory(len(episode_jobs)) as progress:
         return service.download_many(
             episode_jobs,
             on_progress=progress.on_progress,
             on_done=progress.on_done,
         )
-
-
-def format_size(size: int) -> str:
-    """Format byte count for the final textual summary."""
-
-    units = ("B", "KB", "MB", "GB")
-    value = float(size)
-    for unit in units:
-        if value < 1024 or unit == units[-1]:
-            return f"{value:.2f} {unit}" if unit != "B" else f"{int(value)} B"
-        value /= 1024
-    return f"{size} B"

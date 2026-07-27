@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from threading import Lock
 
+from rich.console import Console
 from rich.progress import (
     BarColumn,
     DownloadColumn,
@@ -28,6 +30,21 @@ class ProgressCallbacks:
 
     on_progress: Callable[[DownloadProgressEvent], None]
     on_done: Callable[[JobReport], None]
+
+
+def supports_rich_live(console: Console | None = None) -> bool:
+    """Return True if the terminal can render Rich's in-place Live updates.
+
+    Rich only repositions the cursor when ``Console.is_terminal`` is true and
+    the terminal isn't reported as "dumb". Some phone terminal apps (e.g.
+    a-shell on iOS) capture stdout without exposing a real tty, so
+    ``is_terminal`` is False; Rich's Live then withholds every intermediate
+    frame and only prints once, at the very end, when the whole block exits.
+    Callers should fall back to :func:`plain_download_progress` in that case.
+    """
+
+    console = console or Console()
+    return console.is_terminal and not console.is_dumb_terminal
 
 
 @contextmanager
@@ -114,6 +131,76 @@ def rich_download_progress(total_jobs: int) -> Iterator[ProgressCallbacks]:
                 )
 
         yield ProgressCallbacks(on_progress=on_progress, on_done=on_done)
+
+
+@contextmanager
+def plain_download_progress(
+    total_jobs: int, *, min_interval: float = 1.0
+) -> Iterator[ProgressCallbacks]:
+    """Print a fresh status line per event instead of a Rich Live bar.
+
+    This only relies on an ordinary newline, so it shows up as it happens
+    even on terminal apps that don't give Rich a real tty (see
+    :func:`supports_rich_live`). Per-file updates are throttled to
+    ``min_interval`` seconds so a fast download doesn't flood the screen.
+    """
+
+    lock = Lock()
+    completed_jobs = 0
+    last_printed: dict[str, float] = {}
+
+    def on_progress(event: DownloadProgressEvent) -> None:
+        key = event.episode.page_url
+        now = time.monotonic()
+        with lock:
+            if event.phase != "started" and now - last_printed.get(key, 0.0) < min_interval:
+                return
+            last_printed[key] = now
+            print(f"  {plain_progress_line(event, completed_jobs, total_jobs)}", flush=True)
+
+    def on_done(report: JobReport) -> None:
+        nonlocal completed_jobs
+
+        key = report.result.episode.page_url if report.result else report.url
+        with lock:
+            completed_jobs += 1
+            last_printed.pop(key, None)
+            if report.error:
+                print(f"- failed: {report.url} ({completed_jobs}/{total_jobs})", flush=True)
+            elif report.result:
+                size = format_size(report.result.bytes_written)
+                print(
+                    f"+ {report.result.status}: {report.result.episode.title} "
+                    f"[{size}] ({completed_jobs}/{total_jobs})",
+                    flush=True,
+                )
+
+    yield ProgressCallbacks(on_progress=on_progress, on_done=on_done)
+
+
+def plain_progress_line(event: DownloadProgressEvent, completed_jobs: int, total_jobs: int) -> str:
+    """Build one status line for the plain-text progress fallback."""
+
+    title = trim_title(event.episode.title)
+    completed = format_size(event.bytes_completed)
+    if event.total_bytes:
+        pct = int(event.bytes_completed / event.total_bytes * 100)
+        size_part = f"{completed}/{format_size(event.total_bytes)} ({pct}%)"
+    else:
+        size_part = completed
+    return f"[{completed_jobs}/{total_jobs}] {title}: {size_part}"
+
+
+def format_size(size: int) -> str:
+    """Format a byte count for compact human-readable display."""
+
+    units = ("B", "KB", "MB", "GB")
+    value = float(size)
+    for unit in units:
+        if value < 1024 or unit == units[-1]:
+            return f"{value:.2f} {unit}" if unit != "B" else f"{int(value)} B"
+        value /= 1024
+    return f"{size} B"
 
 
 def overall_description(
