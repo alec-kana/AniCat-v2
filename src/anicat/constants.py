@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 API_URL = "https://v.anime1.me/api"
-DEFAULT_OUTPUT_DIR_NAME = "Anime1_Download"
+DEFAULT_OUTPUT_DIR_NAME = "anime1"
 
 DEFAULT_CONCURRENCY = 3
 DEFAULT_CONNECT_TIMEOUT = 10.0

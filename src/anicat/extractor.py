@@ -27,6 +27,15 @@ class SeasonPage:
 
     episode_urls: list[str]
     next_url: str | None
+    anime_name: str | None = None
+
+
+@dataclass(frozen=True)
+class SeasonEpisodes:
+    """Episode URLs collected from a season/category URL with its anime name."""
+
+    episode_urls: list[str]
+    anime_name: str | None = None
 
 
 class EpisodeSource(Protocol):
@@ -51,8 +60,8 @@ class EpisodeSource(Protocol):
 class EpisodeExtractor(Protocol):
     """Provider-specific extraction behavior selected by Anime1Extractor."""
 
-    def season_episode_urls(self, url: str) -> list[str]:
-        """Collect all episode URLs from a supported season/category URL."""
+    def season_episode_urls(self, url: str) -> SeasonEpisodes:
+        """Collect all episode URLs and the anime name from a season/category URL."""
 
         ...
 
@@ -74,9 +83,14 @@ def parse_season_page(html: str) -> SeasonPage:
 
     next_anchor = soup.select_one("div.nav-previous a[href]")
     next_href = next_anchor.get("href") if next_anchor else None
+
+    title = soup.select_one("h1.page-title")
+    anime_name = title.get_text(" ", strip=True) if title else None
+
     return SeasonPage(
         episode_urls=episode_urls,
         next_url=next_href if isinstance(next_href, str) else None,
+        anime_name=anime_name or None,
     )
 
 
@@ -241,10 +255,11 @@ def split_combined_set_cookie_header(header: str) -> list[str]:
     return [item.strip() for item in SET_COOKIE_SEPARATOR_PATTERN.split(header) if item.strip()]
 
 
-def collect_paginated_episode_urls(fetch_page: PageFetcher, url: str) -> list[str]:
-    """Collect episode links from a paginated WordPress-style listing."""
+def collect_paginated_episode_urls(fetch_page: PageFetcher, url: str) -> SeasonEpisodes:
+    """Collect episode links and the anime name from a paginated WordPress-style listing."""
 
     collected: list[str] = []
+    anime_name: str | None = None
     current_url: str | None = url
     visited: set[str] = set()
 
@@ -258,10 +273,12 @@ def collect_paginated_episode_urls(fetch_page: PageFetcher, url: str) -> list[st
         if html.strip() and not page.episode_urls:
             raise ParseError(f"season page returned no episode links: {current_url}")
         collected.extend(urljoin(current_url, item) for item in page.episode_urls)
+        if anime_name is None:
+            anime_name = page.anime_name
         # Resolve relative pagination URLs against the page that produced them.
         current_url = urljoin(current_url, page.next_url) if page.next_url else None
 
-    return collected
+    return SeasonEpisodes(episode_urls=collected, anime_name=anime_name)
 
 
 class Anime1MeExtractor:
@@ -270,8 +287,8 @@ class Anime1MeExtractor:
     def __init__(self, client: EpisodeSource) -> None:
         self.client = client
 
-    def season_episode_urls(self, url: str) -> list[str]:
-        """Collect all anime1.me episode URLs from a category URL."""
+    def season_episode_urls(self, url: str) -> SeasonEpisodes:
+        """Collect all anime1.me episode URLs and anime name from a category URL."""
 
         return collect_paginated_episode_urls(self.client.post_page, url)
 
@@ -301,8 +318,8 @@ class Anime1PwExtractor:
     def __init__(self, client: EpisodeSource) -> None:
         self.client = client
 
-    def season_episode_urls(self, url: str) -> list[str]:
-        """Collect all anime1.pw episode URLs from a category URL."""
+    def season_episode_urls(self, url: str) -> SeasonEpisodes:
+        """Collect all anime1.pw episode URLs and anime name from a category URL."""
 
         return collect_paginated_episode_urls(self.client.get_page, url)
 
@@ -327,8 +344,8 @@ class Anime1Extractor:
             ANIME1_PW_SOURCE: Anime1PwExtractor(client),
         }
 
-    def season_episode_urls(self, url: str) -> list[str]:
-        """Collect all episode URLs from a supported category URL."""
+    def season_episode_urls(self, url: str) -> SeasonEpisodes:
+        """Collect all episode URLs and the anime name from a supported category URL."""
 
         return self._extractor_for_url(url).season_episode_urls(url)
 

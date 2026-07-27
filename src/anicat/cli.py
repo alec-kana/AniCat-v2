@@ -17,7 +17,7 @@ from .constants import (
 )
 from .errors import AniCatError
 from .logging_config import configure_logging
-from .models import JobReport
+from .models import EpisodeJob, JobReport
 from .options import DownloadOptions
 from .progress import rich_download_progress
 from .service import AniCatService
@@ -153,17 +153,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     service = AniCatService(options)
 
     try:
-        episode_urls = service.collect_episode_urls(input_urls)
+        episode_jobs = service.collect_episode_urls(input_urls)
     except AniCatError as error:
         print(f"- {error}", file=sys.stderr)
         return EXIT_FAILURE
 
-    if not episode_urls:
+    if not episode_jobs:
         print("- No episode found.", file=sys.stderr)
         return EXIT_FAILURE
 
     started_at = time.perf_counter()
-    reports = run_downloads(service, options, episode_urls)
+    reports = run_downloads(service, options, episode_jobs)
     elapsed = time.perf_counter() - started_at
 
     downloaded = [item for item in reports if item.result and item.result.status == "downloaded"]
@@ -206,16 +206,16 @@ def options_from_args(args: argparse.Namespace) -> DownloadOptions:
 def run_downloads(
     service: AniCatService,
     options: DownloadOptions,
-    episode_urls: list[str],
+    episode_jobs: list[EpisodeJob],
 ) -> list[JobReport]:
     """Run downloads with or without Rich progress rendering."""
 
     if not options.progress:
-        return service.download_many(episode_urls)
+        return service.download_many(episode_jobs)
 
-    with rich_download_progress(len(episode_urls)) as progress:
+    with rich_download_progress(len(episode_jobs)) as progress:
         return service.download_many(
-            episode_urls,
+            episode_jobs,
             on_progress=progress.on_progress,
             on_done=progress.on_done,
         )

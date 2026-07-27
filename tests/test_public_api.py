@@ -11,6 +11,7 @@ from anicat import (
     DownloadProgressEvent,
     DownloadResult,
     Episode,
+    EpisodeJob,
     FetchError,
     JobReport,
     ParseError,
@@ -27,6 +28,7 @@ class PublicApiTests(unittest.TestCase):
         self.assertIs(anicat.DownloadProgressEvent, DownloadProgressEvent)
         self.assertIs(anicat.DownloadResult, DownloadResult)
         self.assertIs(anicat.Episode, Episode)
+        self.assertIs(anicat.EpisodeJob, EpisodeJob)
         self.assertIs(anicat.FetchError, FetchError)
         self.assertIs(anicat.JobReport, JobReport)
         self.assertIs(anicat.ParseError, ParseError)

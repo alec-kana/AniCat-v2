@@ -7,6 +7,6 @@
 .ruff_cache/
 *.egg-info/
 *.mp4.part
-Anime1_Download/
+anime1/
 build/
 dist/

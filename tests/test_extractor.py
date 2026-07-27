@@ -48,6 +48,17 @@ class ExtractorTests(unittest.TestCase):
 
         self.assertEqual(page.episode_urls, ["/1", "https://anime1.me/2"])
         self.assertEqual(page.next_url, "/page/2")
+        self.assertIsNone(page.anime_name)
+
+    def test_parse_season_page_extracts_anime_name(self):
+        page = parse_season_page(
+            """
+            <h1 class="page-title">CITY THE ANIMATION</h1>
+            <h2 class="entry-title"><a rel="bookmark" href="/1">A</a></h2>
+            """
+        )
+
+        self.assertEqual(page.anime_name, "CITY THE ANIMATION")
 
     def test_parse_episode_page_extracts_api_request_and_title(self):
         data_apireq, title = parse_episode_page(
@@ -285,6 +296,7 @@ class ExtractorTests(unittest.TestCase):
         client = DirectPageClient(
             {
                 "https://anime1.pw/?cat=60": """
+                <h1 class="page-title">Demo Anime</h1>
                 <h2 class="entry-title">
                     <a href="https://anime1.pw/349" rel="bookmark">Episode 6</a>
                 </h2>
@@ -295,9 +307,10 @@ class ExtractorTests(unittest.TestCase):
             }
         )
 
-        urls = Anime1Extractor(client).season_episode_urls("https://anime1.pw/?cat=60")
+        season = Anime1Extractor(client).season_episode_urls("https://anime1.pw/?cat=60")
 
-        self.assertEqual(urls, ["https://anime1.pw/349", "https://anime1.pw/348"])
+        self.assertEqual(season.episode_urls, ["https://anime1.pw/349", "https://anime1.pw/348"])
+        self.assertEqual(season.anime_name, "Demo Anime")
         self.assertEqual(client.get_calls, ["https://anime1.pw/?cat=60"])
         self.assertEqual(client.post_calls, [])
 
