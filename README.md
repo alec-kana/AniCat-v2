@@ -34,7 +34,7 @@ AniCat-v2 是一個專注於 Anime1 下載體驗的 CLI 工具。它可以把單
 ### A. GitHub Release 安裝（推薦）
 
 ```bash
-python3 -m pip install "git+https://github.com/HeiTang/AniCat-v2.git@v0.2.0"
+python3 -m pip install "git+https://github.com/alec-kana/AniCat-v2.git@v0.2.0"
 anicat --help
 ```
 
@@ -43,7 +43,7 @@ anicat --help
 - 下載專案
     
     ```bash
-    git clone https://github.com/HeiTang/AniCat-v2.git
+    git clone https://github.com/alec-kana/AniCat-v2.git
     cd AniCat-v2
     ```
 
@@ -99,7 +99,7 @@ anicat URL [URL ...] [OPTIONS]
 | 參數 | 說明 | 預設值 |
 |---|---|---|
 | `-o`, `--output DIR` | 指定輸出資料夾（每部動畫會依 `h1.page-title` 解析出的名稱各自建立子資料夾） | `./anime1` |
-| `-e`, `--episodes SPEC` | 只下載分類/季度 URL 中指定的集數，例如 `15-17` 或 `1,3,5-8`；直接輸入的單集 URL 不受此篩選影響 | 不限制 |
+| `-e`, `--episodes SPEC` | 只下載分類/季度 URL 中指定的集數，例如 `15-17` 或 `1,3,5-8`；直接輸入的單集 URL 不受此篩選影響。若指定的集數在該分類找不到，會印出警告訊息 | 不限制 |
 | `-c`, `--concurrency N` | 併發下載數 | `3` |
 | `--timeout SECONDS` | HTTP 讀取逾時秒數 | `30` |
 | `--connect-timeout SECONDS` | HTTP 連線逾時秒數 | `10` |

@@ -317,6 +317,25 @@ class ServiceTests(unittest.TestCase):
             [EpisodeJob(url="https://anime1.me/2", anime_name="Demo Anime")],
         )
 
+    def test_collect_episode_urls_warns_about_missing_requested_episodes(self):
+        service = AniCatService(
+            DownloadOptions(output_dir=Path("unused")),
+            client_factory=SeasonClient,
+        )
+
+        with self.assertLogs("anicat.service", level="WARNING") as logs:
+            jobs = service.collect_episode_urls(
+                ["https://anime1.me/category/demo"],
+                episodes=frozenset({2, 5}),
+            )
+
+        self.assertEqual(
+            jobs,
+            [EpisodeJob(url="https://anime1.me/2", anime_name="Demo Anime")],
+        )
+        self.assertIn("not found", logs.output[0])
+        self.assertIn("5", logs.output[0])
+
     def test_collect_episode_urls_never_filters_explicit_episode_urls(self):
         service = AniCatService(
             DownloadOptions(output_dir=Path("unused")),

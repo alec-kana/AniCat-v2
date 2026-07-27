@@ -66,13 +66,24 @@ class AniCatService:
                 if is_season_url(url):
                     LOGGER.debug("Expanding season URL: %s", url)
                     season = extractor.season_episode_urls(url)
-                    jobs.extend(
-                        EpisodeJob(url=episode_url, anime_name=season.anime_name)
-                        for episode_url, number in zip(
-                            season.episode_urls, season.episode_numbers, strict=True
-                        )
-                        if episodes is None or number in episodes
-                    )
+                    matched_numbers: set[int] = set()
+                    for episode_url, number in zip(
+                        season.episode_urls, season.episode_numbers, strict=True
+                    ):
+                        if episodes is not None and number not in episodes:
+                            continue
+                        if number is not None:
+                            matched_numbers.add(number)
+                        jobs.append(EpisodeJob(url=episode_url, anime_name=season.anime_name))
+
+                    if episodes is not None:
+                        missing = sorted(episodes - matched_numbers)
+                        if missing:
+                            LOGGER.warning(
+                                "Requested episode(s) not found in %s: %s",
+                                url,
+                                ", ".join(str(number) for number in missing),
+                            )
                 elif is_episode_url(url):
                     LOGGER.debug("Adding episode URL: %s", url)
                     jobs.append(EpisodeJob(url=url))

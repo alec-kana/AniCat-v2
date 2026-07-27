@@ -32,4 +32,4 @@ def log_level(*, verbose: int, quiet: bool) -> int:
         return logging.DEBUG
     if verbose == 1:
         return logging.INFO
-    return logging.ERROR
+    return logging.WARNING
