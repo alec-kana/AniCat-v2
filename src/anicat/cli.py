@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 from collections.abc import Sequence
@@ -14,6 +15,7 @@ from .constants import (
     DEFAULT_OUTPUT_DIR_NAME,
     DEFAULT_READ_TIMEOUT,
     DEFAULT_RETRIES,
+    PLAIN_PROGRESS_ENV_VAR,
 )
 from .errors import AniCatError
 from .logging_config import configure_logging
@@ -31,6 +33,14 @@ from .urls import parse_episode_selector, split_urls
 EXIT_OK = 0
 EXIT_FAILURE = 1
 EXIT_USAGE = 2
+
+_TRUTHY_ENV_VALUES = frozenset({"1", "true", "yes", "on"})
+
+
+def env_flag(name: str) -> bool:
+    """Read a boolean CLI-flag default from an environment variable."""
+
+    return os.environ.get(name, "").strip().lower() in _TRUTHY_ENV_VALUES
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -119,10 +129,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--plain-progress",
         action="store_true",
+        default=env_flag(PLAIN_PROGRESS_ENV_VAR),
         help=(
             "Force line-based progress output instead of the Rich live bar. Use this on "
             "phone terminal apps (e.g. a-shell) where the live bar reports itself as a "
-            "compatible terminal but never actually redraws in place."
+            f"compatible terminal but never actually redraws in place. Defaults to on if "
+            f"the {PLAIN_PROGRESS_ENV_VAR} environment variable is set to a truthy value."
         ),
     )
     verbosity_group = parser.add_mutually_exclusive_group()
