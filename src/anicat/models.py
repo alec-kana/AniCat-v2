@@ -33,6 +33,14 @@ class VideoStreamResponse(Protocol):
 
 
 @dataclass(frozen=True)
+class EpisodeJob:
+    """Episode URL paired with the anime name of its originating season, if known."""
+
+    url: str
+    anime_name: str | None = None
+
+
+@dataclass(frozen=True)
 class Episode:
     """Resolved metadata required to download a single Anime1 episode."""
 

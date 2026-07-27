@@ -9,6 +9,8 @@ AniCat-v2 是一個專注於 Anime1 下載體驗的 CLI 工具。它可以把單
 
 - **支援單集與季度下載**：可輸入 `anime1.me` / `anime1.pw` 單集 URL、分類/季度 URL，也支援多 URL 批次下載。
 
+- **依動畫名稱分資料夾**：透過分類/季度 URL 下載時，會從頁面的 `h1.page-title` 解析動畫名稱，並將該部動畫的集數下載到 `<輸出資料夾>/<動畫名稱>/` 底下，避免所有集數都堆在同一層。
+
 - **併發下載**：用 `--concurrency` 控制同時下載數，整季下載更有效率。
 
 - **Rich 多任務進度列**：顯示整體下載量、速度、完成集數，以及目前下載中的單檔進度。
@@ -89,7 +91,7 @@ anicat URL [URL ...] [OPTIONS]
 
 | 參數 | 說明 | 預設值 |
 |---|---|---|
-| `-o`, `--output DIR` | 指定輸出資料夾 | `./Anime1_Download` |
+| `-o`, `--output DIR` | 指定輸出資料夾（每部動畫會依 `h1.page-title` 解析出的名稱各自建立子資料夾） | `./anime1` |
 | `-c`, `--concurrency N` | 併發下載數 | `3` |
 | `--timeout SECONDS` | HTTP 讀取逾時秒數 | `30` |
 | `--connect-timeout SECONDS` | HTTP 連線逾時秒數 | `10` |
@@ -118,11 +120,11 @@ from pathlib import Path
 
 from anicat import AniCatService, DownloadOptions
 
-options = DownloadOptions(output_dir=Path("./Anime1_Download"))
+options = DownloadOptions(output_dir=Path("./anime1"))
 service = AniCatService(options)
 
-episode_urls = service.collect_episode_urls(["https://anime1.me/15651"])
-reports = service.download_many(episode_urls)
+episode_jobs = service.collect_episode_urls(["https://anime1.me/15651"])
+reports = service.download_many(episode_jobs)
 ```
 
 ### Exit Codes

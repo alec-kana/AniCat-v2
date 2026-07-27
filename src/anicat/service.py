@@ -7,12 +7,12 @@ from threading import Lock, local
 from typing import Protocol
 
 from .client import Anime1Client
-from .downloader import VideoSource, download_episode
+from .downloader import VideoSource, download_episode, sanitize_filename
 from .errors import AniCatError
 from .extractor import Anime1Extractor, EpisodeSource
-from .models import DownloadProgressEvent, JobReport
+from .models import DownloadProgressEvent, EpisodeJob, JobReport
 from .options import DownloadOptions
-from .urls import dedupe, ensure_supported_url, is_episode_url, is_season_url
+from .urls import ensure_supported_url, is_episode_url, is_season_url
 
 DownloadProgress = Callable[[DownloadProgressEvent], None]
 JobDone = Callable[["JobReport"], None]
@@ -43,42 +43,46 @@ class AniCatService:
         self.options = options
         self.client_factory = client_factory or self._default_client
 
-    def collect_episode_urls(self, input_urls: list[str]) -> list[str]:
-        """Expand supported input URLs into a de-duplicated episode URL list."""
+    def collect_episode_urls(self, input_urls: list[str]) -> list[EpisodeJob]:
+        """Expand supported input URLs into a de-duplicated episode job list."""
 
         LOGGER.info("Collecting episodes from %d input URL(s)", len(input_urls))
         client = self.client_factory()
         try:
             extractor = Anime1Extractor(client)
-            episode_urls: list[str] = []
+            jobs: list[EpisodeJob] = []
 
             for url in input_urls:
                 ensure_supported_url(url)
                 if is_season_url(url):
                     LOGGER.debug("Expanding season URL: %s", url)
-                    episode_urls.extend(extractor.season_episode_urls(url))
+                    season = extractor.season_episode_urls(url)
+                    jobs.extend(
+                        EpisodeJob(url=episode_url, anime_name=season.anime_name)
+                        for episode_url in season.episode_urls
+                    )
                 elif is_episode_url(url):
                     LOGGER.debug("Adding episode URL: %s", url)
-                    episode_urls.append(url)
+                    jobs.append(EpisodeJob(url=url))
 
-            deduped_urls = dedupe(episode_urls)
-            LOGGER.info("Collected %d episode URL(s)", len(deduped_urls))
-            return deduped_urls
+            deduped_jobs = dedupe_jobs(jobs)
+            LOGGER.info("Collected %d episode URL(s)", len(deduped_jobs))
+            return deduped_jobs
         finally:
             close_client(client)
 
     def download_many(
         self,
-        episode_urls: list[str],
+        episode_jobs: list[EpisodeJob],
         *,
         on_progress: DownloadProgress | None = None,
         on_done: JobDone | None = None,
     ) -> list[JobReport]:
-        """Download multiple episode URLs concurrently and return job reports."""
+        """Download multiple episode jobs concurrently and return job reports."""
 
         LOGGER.info(
             "Downloading %d episode(s) with %d worker(s)",
-            len(episode_urls),
+            len(episode_jobs),
             self.options.worker_count,
         )
         reports: list[JobReport] = []
@@ -97,12 +101,13 @@ class AniCatService:
                     worker_clients.append(client)
             return client
 
-        def download_with_worker_client(url: str) -> JobReport:
-            """Download one URL using the session owned by the current worker thread."""
+        def download_with_worker_client(job: EpisodeJob) -> JobReport:
+            """Download one job using the session owned by the current worker thread."""
 
             return self._download_one_with_client(
                 worker_client(),
-                url,
+                job.url,
+                anime_name=job.anime_name,
                 on_progress=on_progress,
             )
 
@@ -110,7 +115,7 @@ class AniCatService:
             with ThreadPoolExecutor(max_workers=self.options.worker_count) as executor:
                 # Each worker owns one reusable HTTP session across its assigned jobs.
                 futures = {
-                    executor.submit(download_with_worker_client, url): url for url in episode_urls
+                    executor.submit(download_with_worker_client, job): job for job in episode_jobs
                 }
 
                 for future in as_completed(futures):
@@ -128,6 +133,7 @@ class AniCatService:
         self,
         url: str,
         *,
+        anime_name: str | None = None,
         on_progress: DownloadProgress | None = None,
     ) -> JobReport:
         """Resolve and download one episode URL, isolating recoverable failures."""
@@ -135,7 +141,12 @@ class AniCatService:
         client = self.client_factory()
 
         try:
-            return self._download_one_with_client(client, url, on_progress=on_progress)
+            return self._download_one_with_client(
+                client,
+                url,
+                anime_name=anime_name,
+                on_progress=on_progress,
+            )
         finally:
             close_client(client)
 
@@ -144,19 +155,23 @@ class AniCatService:
         client: AniCatClient,
         url: str,
         *,
+        anime_name: str | None = None,
         on_progress: DownloadProgress | None = None,
     ) -> JobReport:
         """Resolve and download one episode URL using an already-owned client."""
 
         LOGGER.info("Resolving episode: %s", url)
         extractor = Anime1Extractor(client)
+        output_dir = self.options.output_dir
+        if anime_name:
+            output_dir = output_dir / sanitize_filename(anime_name)
 
         try:
             episode = extractor.episode(url)
             result = download_episode(
                 client,
                 episode,
-                self.options.output_dir,
+                output_dir,
                 chunk_size=self.options.safe_chunk_size,
                 resume=self.options.resume,
                 overwrite=self.options.overwrite,
@@ -179,6 +194,19 @@ class AniCatService:
             timeout=self.options.request_timeout,
             retries=self.options.retries,
         )
+
+
+def dedupe_jobs(jobs: list[EpisodeJob]) -> list[EpisodeJob]:
+    """Remove duplicate episode URLs while preserving first-seen order and anime name."""
+
+    seen: set[str] = set()
+    result: list[EpisodeJob] = []
+    for job in jobs:
+        if job.url in seen:
+            continue
+        seen.add(job.url)
+        result.append(job)
+    return result
 
 
 def close_client(client: object) -> None:

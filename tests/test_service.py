@@ -6,7 +6,7 @@ from typing import ClassVar, NoReturn, cast
 
 import requests
 
-from anicat.models import VideoStreamResponse
+from anicat.models import EpisodeJob, VideoStreamResponse
 from anicat.options import DownloadOptions
 from anicat.service import AniCatService
 
@@ -130,6 +130,37 @@ class DirectClient:
         self.closed = True
 
 
+class SeasonClient:
+    def get_page(self, url: str) -> str:
+        return self.post_page(url)
+
+    def post_page(self, url: str) -> str:
+        if url == "https://anime1.me/category/demo":
+            return """
+            <h1 class="page-title">Demo Anime</h1>
+            <h2 class="entry-title"><a rel="bookmark" href="https://anime1.me/1">Demo [01]</a></h2>
+            """
+        return """
+        <h2 class="entry-title">Demo [01]</h2>
+        <video class="video-js" data-apireq="%7B%7D"></video>
+        """
+
+    def post_api(self, data_apireq: str) -> requests.Response:
+        return cast(requests.Response, ApiResponse())
+
+    def stream_video(
+        self,
+        url: str,
+        *,
+        cookies: Mapping[str, str],
+        headers: Mapping[str, str] | None = None,
+    ) -> VideoStreamResponse:
+        return VideoResponse()
+
+    def close(self) -> None:
+        pass
+
+
 class ServiceTests(unittest.TestCase):
     def test_download_one_reports_recoverable_extractor_error(self):
         service = AniCatService(
@@ -160,7 +191,7 @@ class ServiceTests(unittest.TestCase):
             )
 
             reports = service.download_many(
-                ["https://anime1.me/1"],
+                [EpisodeJob(url="https://anime1.me/1")],
                 on_progress=lambda event: progress.append(
                     (
                         event.phase,
@@ -202,8 +233,8 @@ class ServiceTests(unittest.TestCase):
 
             reports = service.download_many(
                 [
-                    "https://anime1.me/1",
-                    "https://anime1.me/2",
+                    EpisodeJob(url="https://anime1.me/1"),
+                    EpisodeJob(url="https://anime1.me/2"),
                 ]
             )
 
@@ -219,9 +250,9 @@ class ServiceTests(unittest.TestCase):
             client_factory=GoodClient,
         )
 
-        urls = service.collect_episode_urls(["https://anime1.me/1"])
+        jobs = service.collect_episode_urls(["https://anime1.me/1"])
 
-        self.assertEqual(urls, ["https://anime1.me/1"])
+        self.assertEqual(jobs, [EpisodeJob(url="https://anime1.me/1")])
         self.assertEqual(len(GoodClient.instances), 1)
         self.assertTrue(GoodClient.instances[0].closed)
 
@@ -244,6 +275,26 @@ class ServiceTests(unittest.TestCase):
                 [("https://pwvideo.example/60/6.mp4?h=token&e=1", {})],
             )
             self.assertTrue(DirectClient.instances[0].closed)
+
+    def test_season_download_places_episode_under_anime_name_subfolder(self):
+        with TemporaryDirectory() as directory:
+            service = AniCatService(
+                DownloadOptions(output_dir=Path(directory), chunk_size=1024),
+                client_factory=SeasonClient,
+            )
+
+            jobs = service.collect_episode_urls(["https://anime1.me/category/demo"])
+            self.assertEqual(
+                jobs,
+                [EpisodeJob(url="https://anime1.me/1", anime_name="Demo Anime")],
+            )
+
+            reports = service.download_many(jobs)
+
+            result = reports[0].result
+            assert result is not None
+            self.assertEqual(result.path.parent, Path(directory) / "Demo Anime")
+            self.assertEqual(result.path.read_bytes(), VideoResponse.content)
 
 
 if __name__ == "__main__":
