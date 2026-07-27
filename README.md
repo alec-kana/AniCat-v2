@@ -31,14 +31,23 @@ AniCat-v2 是一個專注於 Anime1 下載體驗的 CLI 工具。它可以把單
 
 ## 安裝方式
 
-### A. GitHub Release 安裝（推薦）
+### A. 從本 fork 安裝（推薦，需要 `git`）
 
 ```bash
-python3 -m pip install "git+https://github.com/alec-kana/AniCat-v2.git@v0.2.0"
+python3 -m pip install "git+https://github.com/alec-kana/AniCat-v2.git@main"
 anicat --help
 ```
 
-### B. 本機開發安裝
+### B. 手機 / 無 git 環境安裝（例如 iOS a-shell）
+
+a-shell 等行動裝置終端機通常沒有內建 `git`，上面的 `git+https://...` 安裝方式會失敗。改用下載 tarball 的方式安裝即可：
+
+```bash
+python3 -m pip install https://github.com/alec-kana/AniCat-v2/archive/refs/heads/main.tar.gz
+anicat --help
+```
+
+### C. 本機開發安裝
 
 - 下載專案
     
@@ -58,6 +67,29 @@ anicat --help
     python3 -m pip install .
     anicat --help
     ```
+
+## 更新方式
+
+依照原本使用的安裝方式挑選對應指令：
+
+- **方式 A / B（跟隨 main 分支安裝）**：main 分支更新後版本號（`0.2.0`）通常不會跟著變，單純重新執行安裝指令 pip 會判斷「已安裝相同版本」而略過，因此更新時務必加上 `--force-reinstall`（並建議加 `--no-cache-dir`，避免用到 pip 快取的舊內容）：
+
+    ```bash
+    # 方式 A（git+ 安裝）
+    python3 -m pip install --upgrade --force-reinstall --no-cache-dir "git+https://github.com/alec-kana/AniCat-v2.git@main"
+
+    # 方式 B（tarball 安裝）
+    python3 -m pip install --upgrade --force-reinstall --no-cache-dir https://github.com/alec-kana/AniCat-v2/archive/refs/heads/main.tar.gz
+    ```
+
+- **方式 C（本機開發安裝）**：先拉取最新程式碼，再重新安裝：
+
+    ```bash
+    git pull
+    poetry install          # 或：python3 -m pip install --upgrade --force-reinstall .
+    ```
+
+更新完成後可用 `anicat --version` 確認版本號。
 
 ## 使用方法
 
@@ -116,6 +148,10 @@ anicat URL [URL ...] [OPTIONS]
 ```bash
 anicat --help
 ```
+
+### 在 a-shell 等行動終端機上的進度顯示
+
+a-shell 之類的手機終端機 App 通常不提供真正的 tty，Rich 因此偵測不到可以就地更新的終端機，導致原本的多任務進度列在下載過程中完全不顯示，直到全部下載完成才一次印出。AniCat-v2 會自動偵測這種情況，改用逐行印出的純文字進度（每個檔案開始下載時，以及之後每隔約 1 秒）取代 Rich 進度列，讓下載進度即時可見。這是自動切換，不需要額外參數；如果不想看到任何進度輸出，仍可用 `--no-progress` 關閉。
 
 ## 進階說明
 
