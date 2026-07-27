@@ -140,6 +140,7 @@ anicat URL [URL ...] [OPTIONS]
 | `--overwrite` | 覆寫已完成的同名檔案 | `False` |
 | `--no-resume` | 不沿用既有 `.part` 暫存檔 | `False` |
 | `--no-progress` | 關閉進度列 | `False` |
+| `--plain-progress` | 強制使用逐行純文字進度，取代 Rich 進度列（見下方 a-shell 說明） | `False` |
 | `-v`, `--verbose` | 顯示診斷 log；`-vv` 顯示 HTTP retry/debug 細節 | `False` |
 | `-q`, `--quiet` | 只保留錯誤等級 log，下載摘要仍會輸出 | `False` |
 | `-V`, `--version` | 顯示版本後離開 | - |
@@ -151,7 +152,15 @@ anicat --help
 
 ### 在 a-shell 等行動終端機上的進度顯示
 
-a-shell 之類的手機終端機 App 通常不提供真正的 tty，Rich 因此偵測不到可以就地更新的終端機，導致原本的多任務進度列在下載過程中完全不顯示，直到全部下載完成才一次印出。AniCat-v2 會自動偵測這種情況，改用逐行印出的純文字進度（每個檔案開始下載時，以及之後每隔約 1 秒）取代 Rich 進度列，讓下載進度即時可見。這是自動切換，不需要額外參數；如果不想看到任何進度輸出，仍可用 `--no-progress` 關閉。
+Rich 的進度列只有在偵測到「可以就地更新畫面的終端機」時才會即時重繪；否則就會整段延後到下載全部結束才一次印出。AniCat-v2 會嘗試自動偵測並在偵測不到的情況下改用逐行印出的純文字進度。但部分手機終端機 App（例如 a-shell）會回報自己是相容的終端機，實際上卻不會即時重繪 Rich 的畫面，導致自動偵測誤判、畫面仍卡在初始的 `0/N` 不動，直到結束才整批輸出。
+
+遇到這種情況，請直接加上 `--plain-progress` 強制使用純文字進度（不依賴終端機自動偵測），畫面就會在每個檔案開始下載，以及之後每隔約 1 秒印出一行進度：
+
+```bash
+anicat https://anime1.me/category/your-category-slug --plain-progress
+```
+
+如果不想看到任何進度輸出，可改用 `--no-progress` 關閉。
 
 ## 進階說明
 
