@@ -25,6 +25,7 @@ class DownloadOptions:
     resume: bool = True
     overwrite: bool = False
     progress: bool = True
+    plain_progress: bool = False
 
     def __post_init__(self) -> None:
         """Validate runtime options early instead of silently coercing bad values."""

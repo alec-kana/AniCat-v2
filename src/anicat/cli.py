@@ -116,6 +116,15 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Disable progress bar.",
     )
+    parser.add_argument(
+        "--plain-progress",
+        action="store_true",
+        help=(
+            "Force line-based progress output instead of the Rich live bar. Use this on "
+            "phone terminal apps (e.g. a-shell) where the live bar reports itself as a "
+            "compatible terminal but never actually redraws in place."
+        ),
+    )
     verbosity_group = parser.add_mutually_exclusive_group()
     verbosity_group.add_argument(
         "-v",
@@ -224,6 +233,7 @@ def options_from_args(args: argparse.Namespace) -> DownloadOptions:
         resume=not args.no_resume,
         overwrite=args.overwrite,
         progress=not args.no_progress,
+        plain_progress=args.plain_progress,
     )
 
 
@@ -237,7 +247,8 @@ def run_downloads(
     if not options.progress:
         return service.download_many(episode_jobs)
 
-    progress_factory = rich_download_progress if supports_rich_live() else plain_download_progress
+    use_rich = not options.plain_progress and supports_rich_live()
+    progress_factory = rich_download_progress if use_rich else plain_download_progress
     with progress_factory(len(episode_jobs)) as progress:
         return service.download_many(
             episode_jobs,

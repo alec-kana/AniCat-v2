@@ -1,10 +1,18 @@
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from anicat import __version__
-from anicat.cli import EXIT_FAILURE, EXIT_OK, EXIT_USAGE, build_parser, main, options_from_args
+from anicat.cli import (
+    EXIT_FAILURE,
+    EXIT_OK,
+    EXIT_USAGE,
+    build_parser,
+    main,
+    options_from_args,
+    run_downloads,
+)
 
 
 class CliTests(unittest.TestCase):
@@ -66,6 +74,31 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(args.verbose, 0)
         self.assertTrue(args.quiet)
+
+    def test_plain_progress_flag_sets_options(self):
+        args = build_parser().parse_args(["--plain-progress", "https://anime1.me/1"])
+
+        self.assertTrue(options_from_args(args).plain_progress)
+
+    def test_plain_progress_defaults_to_false(self):
+        args = build_parser().parse_args(["https://anime1.me/1"])
+
+        self.assertFalse(options_from_args(args).plain_progress)
+
+    def test_plain_progress_flag_forces_plain_renderer_even_on_a_live_capable_terminal(self):
+        args = build_parser().parse_args(["--plain-progress", "https://anime1.me/1"])
+        options = options_from_args(args)
+        service = MagicMock()
+
+        with (
+            patch("anicat.cli.supports_rich_live", return_value=True),
+            patch("anicat.cli.plain_download_progress") as plain_factory,
+            patch("anicat.cli.rich_download_progress") as rich_factory,
+        ):
+            run_downloads(service, options, [])
+
+        plain_factory.assert_called_once_with(0)
+        rich_factory.assert_not_called()
 
     def test_exit_code_constants_match_documented_values(self):
         self.assertEqual(EXIT_OK, 0)
