@@ -169,7 +169,11 @@ export ANICAT_PLAIN_PROGRESS=1
 anicat https://anime1.me/category/your-category-slug
 ```
 
-把 `export` 那行加到 a-shell 啟動時會載入的設定檔（例如 `~/Documents/.profile`，實際檔名依 a-shell 版本而定）即可長期生效，不需要每次手動打。
+a-shell 每次開新視窗都會自動執行 `~/Documents/.profile`（檔案不存在則略過，需自行建立），執行以下指令寫入一次即可長期生效，之後開新視窗都不用再手動打：
+
+```bash
+echo 'export ANICAT_PLAIN_PROGRESS=1' >> ~/Documents/.profile
+```
 
 ## 進階說明
 
