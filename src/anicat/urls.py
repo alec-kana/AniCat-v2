@@ -113,6 +113,37 @@ def ensure_supported_url(url: str) -> None:
         raise AniCatError(f"unsupported Anime1 URL: {url}")
 
 
+def parse_episode_selector(spec: str) -> frozenset[int]:
+    """Parse a comma-separated episode number/range selector like '15-17,20'."""
+
+    numbers: set[int] = set()
+    for part in spec.split(","):
+        part = part.strip()
+        if not part:
+            raise AniCatError(f"invalid episode selector: {spec!r}")
+
+        if "-" in part:
+            start_text, _, end_text = part.partition("-")
+            start = _parse_episode_bound(start_text, spec)
+            end = _parse_episode_bound(end_text, spec)
+            if end < start:
+                raise AniCatError(f"invalid episode range {part!r} in selector: {spec!r}")
+            numbers.update(range(start, end + 1))
+        else:
+            numbers.add(_parse_episode_bound(part, spec))
+
+    return frozenset(numbers)
+
+
+def _parse_episode_bound(value: str, spec: str) -> int:
+    """Parse one episode selector bound, rejecting non-positive or non-numeric values."""
+
+    value = value.strip()
+    if not value.isdigit() or int(value) < 1:
+        raise AniCatError(f"invalid episode selector: {spec!r}")
+    return int(value)
+
+
 def dedupe(values: Iterable[str]) -> list[str]:
     """Remove duplicates while preserving the original order."""
 

@@ -43,8 +43,17 @@ class AniCatService:
         self.options = options
         self.client_factory = client_factory or self._default_client
 
-    def collect_episode_urls(self, input_urls: list[str]) -> list[EpisodeJob]:
-        """Expand supported input URLs into a de-duplicated episode job list."""
+    def collect_episode_urls(
+        self,
+        input_urls: list[str],
+        *,
+        episodes: frozenset[int] | None = None,
+    ) -> list[EpisodeJob]:
+        """Expand supported input URLs into a de-duplicated episode job list.
+
+        ``episodes``, when given, restricts season/category expansions to the
+        matching episode numbers; explicit episode URLs are never filtered.
+        """
 
         LOGGER.info("Collecting episodes from %d input URL(s)", len(input_urls))
         client = self.client_factory()
@@ -59,7 +68,10 @@ class AniCatService:
                     season = extractor.season_episode_urls(url)
                     jobs.extend(
                         EpisodeJob(url=episode_url, anime_name=season.anime_name)
-                        for episode_url in season.episode_urls
+                        for episode_url, number in zip(
+                            season.episode_urls, season.episode_numbers, strict=True
+                        )
+                        if episodes is None or number in episodes
                     )
                 elif is_episode_url(url):
                     LOGGER.debug("Adding episode URL: %s", url)

@@ -21,7 +21,7 @@ from .models import EpisodeJob, JobReport
 from .options import DownloadOptions
 from .progress import rich_download_progress
 from .service import AniCatService
-from .urls import split_urls
+from .urls import parse_episode_selector, split_urls
 
 EXIT_OK = 0
 EXIT_FAILURE = 1
@@ -53,6 +53,17 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path.cwd() / DEFAULT_OUTPUT_DIR_NAME,
         help=f"Output directory. Default: ./{DEFAULT_OUTPUT_DIR_NAME}",
+    )
+    parser.add_argument(
+        "-e",
+        "--episodes",
+        type=str,
+        default=None,
+        metavar="SPEC",
+        help=(
+            "Restrict category/season URLs to these episode numbers, e.g. '15-17' "
+            "or '1,3,5-8'. Explicit episode URLs are never filtered."
+        ),
     )
     parser.add_argument(
         "-c",
@@ -136,6 +147,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"argument error: {error}", file=sys.stderr)
         return EXIT_USAGE
 
+    episodes = None
+    if args.episodes is not None:
+        try:
+            episodes = parse_episode_selector(args.episodes)
+        except AniCatError as error:
+            print(f"argument error: {error}", file=sys.stderr)
+            return EXIT_USAGE
+
     input_urls = split_urls(args.urls)
     if not input_urls:
         if not sys.stdin.isatty():
@@ -153,7 +172,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     service = AniCatService(options)
 
     try:
-        episode_jobs = service.collect_episode_urls(input_urls)
+        episode_jobs = service.collect_episode_urls(input_urls, episodes=episodes)
     except AniCatError as error:
         print(f"- {error}", file=sys.stderr)
         return EXIT_FAILURE

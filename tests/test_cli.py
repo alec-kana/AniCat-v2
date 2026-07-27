@@ -21,6 +21,14 @@ class CliTests(unittest.TestCase):
     def test_invalid_connect_timeout_returns_argument_error(self):
         self.assertEqual(main(["--connect-timeout", "0", "https://anime1.me/1"]), EXIT_USAGE)
 
+    def test_invalid_episodes_selector_returns_argument_error(self):
+        self.assertEqual(main(["--episodes", "abc", "https://anime1.me/1"]), EXIT_USAGE)
+
+    def test_episodes_flag_is_parsed(self):
+        args = build_parser().parse_args(["--episodes", "15-17", "https://anime1.me/1"])
+
+        self.assertEqual(args.episodes, "15-17")
+
     def test_timeout_flags_build_request_timeout_tuple(self):
         args = build_parser().parse_args(
             [

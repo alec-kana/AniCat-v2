@@ -139,9 +139,11 @@ class SeasonClient:
             return """
             <h1 class="page-title">Demo Anime</h1>
             <h2 class="entry-title"><a rel="bookmark" href="https://anime1.me/1">Demo [01]</a></h2>
+            <h2 class="entry-title"><a rel="bookmark" href="https://anime1.me/2">Demo [02]</a></h2>
             """
-        return """
-        <h2 class="entry-title">Demo [01]</h2>
+        number = "02" if url.endswith("/2") else "01"
+        return f"""
+        <h2 class="entry-title">Demo [{number}]</h2>
         <video class="video-js" data-apireq="%7B%7D"></video>
         """
 
@@ -286,7 +288,10 @@ class ServiceTests(unittest.TestCase):
             jobs = service.collect_episode_urls(["https://anime1.me/category/demo"])
             self.assertEqual(
                 jobs,
-                [EpisodeJob(url="https://anime1.me/1", anime_name="Demo Anime")],
+                [
+                    EpisodeJob(url="https://anime1.me/1", anime_name="Demo Anime"),
+                    EpisodeJob(url="https://anime1.me/2", anime_name="Demo Anime"),
+                ],
             )
 
             reports = service.download_many(jobs)
@@ -295,6 +300,35 @@ class ServiceTests(unittest.TestCase):
             assert result is not None
             self.assertEqual(result.path.parent, Path(directory) / "Demo Anime")
             self.assertEqual(result.path.read_bytes(), VideoResponse.content)
+
+    def test_collect_episode_urls_filters_season_by_episodes(self):
+        service = AniCatService(
+            DownloadOptions(output_dir=Path("unused")),
+            client_factory=SeasonClient,
+        )
+
+        jobs = service.collect_episode_urls(
+            ["https://anime1.me/category/demo"],
+            episodes=frozenset({2}),
+        )
+
+        self.assertEqual(
+            jobs,
+            [EpisodeJob(url="https://anime1.me/2", anime_name="Demo Anime")],
+        )
+
+    def test_collect_episode_urls_never_filters_explicit_episode_urls(self):
+        service = AniCatService(
+            DownloadOptions(output_dir=Path("unused")),
+            client_factory=GoodClient,
+        )
+
+        jobs = service.collect_episode_urls(
+            ["https://anime1.me/1"],
+            episodes=frozenset({99}),
+        )
+
+        self.assertEqual(jobs, [EpisodeJob(url="https://anime1.me/1")])
 
 
 if __name__ == "__main__":
