@@ -163,6 +163,70 @@ class SeasonClient:
         pass
 
 
+class StandaloneEpisodeClient:
+    """anime1.me client whose episode page links to its category via 全集連結."""
+
+    def get_page(self, url: str) -> NoReturn:
+        raise AssertionError("anime1.me extraction should use post_page")
+
+    def post_page(self, url: str) -> str:
+        if url == "https://anime1.me/29592":
+            return """
+            <div class="entry-content"><a href="?cat=1921">全集連結</a></div>
+            <h2 class="entry-title">Demo Anime [12]</h2>
+            <video class="video-js" data-apireq="%7B%7D"></video>
+            """
+        if url == "https://anime1.me/29592?cat=1921":
+            return """
+            <h1 class="page-title">Demo Anime Full Title</h1>
+            <h2 class="entry-title"><a rel="bookmark" href="/29592">Demo Anime [12]</a></h2>
+            """
+        raise AssertionError(f"unexpected page request: {url}")
+
+    def post_api(self, data_apireq: str) -> requests.Response:
+        return cast(requests.Response, ApiResponse())
+
+    def stream_video(
+        self,
+        url: str,
+        *,
+        cookies: Mapping[str, str],
+        headers: Mapping[str, str] | None = None,
+    ) -> VideoStreamResponse:
+        return VideoResponse()
+
+    def close(self) -> None:
+        pass
+
+
+class StandaloneEpisodeNoSeriesLinkClient:
+    """anime1.me client whose episode page has no 全集連結 link."""
+
+    def get_page(self, url: str) -> NoReturn:
+        raise AssertionError("anime1.me extraction should use post_page")
+
+    def post_page(self, url: str) -> str:
+        return """
+        <h2 class="entry-title">Demo Anime [12]</h2>
+        <video class="video-js" data-apireq="%7B%7D"></video>
+        """
+
+    def post_api(self, data_apireq: str) -> requests.Response:
+        return cast(requests.Response, ApiResponse())
+
+    def stream_video(
+        self,
+        url: str,
+        *,
+        cookies: Mapping[str, str],
+        headers: Mapping[str, str] | None = None,
+    ) -> VideoStreamResponse:
+        return VideoResponse()
+
+    def close(self) -> None:
+        pass
+
+
 class ServiceTests(unittest.TestCase):
     def test_download_one_reports_recoverable_extractor_error(self):
         service = AniCatService(
@@ -300,6 +364,32 @@ class ServiceTests(unittest.TestCase):
             assert result is not None
             self.assertEqual(result.path.parent, Path(directory) / "Demo Anime")
             self.assertEqual(result.path.read_bytes(), VideoResponse.content)
+
+    def test_standalone_episode_download_resolves_anime_name_via_series_link(self):
+        with TemporaryDirectory() as directory:
+            service = AniCatService(
+                DownloadOptions(output_dir=Path(directory), chunk_size=1024),
+                client_factory=StandaloneEpisodeClient,
+            )
+
+            reports = service.download_many([EpisodeJob(url="https://anime1.me/29592")])
+
+            result = reports[0].result
+            assert result is not None
+            self.assertEqual(result.path.parent, Path(directory) / "Demo Anime Full Title")
+
+    def test_standalone_episode_download_falls_back_to_stripped_title_subfolder(self):
+        with TemporaryDirectory() as directory:
+            service = AniCatService(
+                DownloadOptions(output_dir=Path(directory), chunk_size=1024),
+                client_factory=StandaloneEpisodeNoSeriesLinkClient,
+            )
+
+            reports = service.download_many([EpisodeJob(url="https://anime1.me/29592")])
+
+            result = reports[0].result
+            assert result is not None
+            self.assertEqual(result.path.parent, Path(directory) / "Demo Anime")
 
     def test_collect_episode_urls_filters_season_by_episodes(self):
         service = AniCatService(

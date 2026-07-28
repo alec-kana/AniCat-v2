@@ -185,12 +185,14 @@ class AniCatService:
 
         LOGGER.info("Resolving episode: %s", url)
         extractor = Anime1Extractor(client)
-        output_dir = self.options.output_dir
-        if anime_name:
-            output_dir = output_dir / sanitize_filename(anime_name)
 
         try:
-            episode = extractor.episode(url)
+            episode = extractor.episode(url, resolve_anime_name=anime_name is None)
+            effective_anime_name = anime_name or episode.anime_name
+            output_dir = self.options.output_dir
+            if effective_anime_name:
+                output_dir = output_dir / sanitize_filename(effective_anime_name)
+
             result = download_episode(
                 client,
                 episode,
