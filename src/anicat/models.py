@@ -48,6 +48,7 @@ class Episode:
     title: str
     stream_url: str
     cookies: Mapping[str, str] = field(default_factory=dict)
+    anime_name: str | None = None
 
 
 @dataclass(frozen=True)

@@ -11,13 +11,15 @@ from urllib.parse import urljoin, urlparse
 import requests
 from bs4 import BeautifulSoup, FeatureNotFound
 
-from .errors import ParseError
+from .errors import AniCatError, ParseError
 from .models import Episode
 from .urls import ANIME1_ME_SOURCE, ANIME1_PW_SOURCE, SourceKind, source_kind
 
 ACCESS_COOKIE_NAMES = ("e", "p", "h")
 SET_COOKIE_SEPARATOR_PATTERN = re.compile(r",\s*(?=[^=;,\s]+=)")
 EPISODE_NUMBER_PATTERN = re.compile(r"\[(\d+)\]\s*$")
+TRAILING_EPISODE_NUMBER_PATTERN = re.compile(r"\s*\[\d+\]\s*$")
+SERIES_LINK_TEXT = "全集連結"
 LOGGER = logging.getLogger(__name__)
 PageFetcher = Callable[[str], str]
 
@@ -68,7 +70,7 @@ class EpisodeExtractor(Protocol):
 
         ...
 
-    def episode(self, url: str) -> Episode:
+    def episode(self, url: str, *, resolve_anime_name: bool = False) -> Episode:
         """Resolve one episode page URL into download-ready metadata."""
 
         ...
@@ -107,8 +109,8 @@ def parse_episode_number(title: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
-def parse_episode_page(html: str) -> tuple[str, str]:
-    """Parse data-apireq and display title from an episode page."""
+def parse_episode_page(html: str) -> tuple[str, str, str | None]:
+    """Parse data-apireq, display title, and series-link href from an episode page."""
 
     soup = parse_html(html)
     title = soup.select_one("h2.entry-title")
@@ -119,10 +121,10 @@ def parse_episode_page(html: str) -> tuple[str, str]:
     if not title:
         raise ParseError("episode page is missing title")
 
-    return data_apireq, title.get_text(" ", strip=True)
+    return data_apireq, title.get_text(" ", strip=True), select_series_link(soup)
 
 
-def parse_direct_episode_page(html: str, base_url: str) -> tuple[str, str]:
+def parse_direct_episode_page(html: str, base_url: str) -> tuple[str, str, str | None]:
     """Parse direct-video episode pages that expose a source URL in HTML."""
 
     soup = parse_html(html)
@@ -134,7 +136,53 @@ def parse_direct_episode_page(html: str, base_url: str) -> tuple[str, str]:
     if source_url is None:
         raise ParseError("episode page is missing MP4 video source")
 
-    return urljoin(base_url, source_url), title.get_text(" ", strip=True)
+    return (
+        urljoin(base_url, source_url),
+        title.get_text(" ", strip=True),
+        select_series_link(soup),
+    )
+
+
+def select_series_link(soup: BeautifulSoup) -> str | None:
+    """Return the href of an episode page's "全集連結" (full series) link, if present."""
+
+    for anchor in soup.select("div.entry-content a[href]"):
+        if anchor.get_text(strip=True) == SERIES_LINK_TEXT:
+            href = anchor.get("href")
+            return href if isinstance(href, str) and href else None
+    return None
+
+
+def strip_trailing_episode_number(title: str) -> str:
+    """Remove a trailing bracketed episode number (and surrounding whitespace) from a title."""
+
+    return TRAILING_EPISODE_NUMBER_PATTERN.sub("", title).strip()
+
+
+def resolve_standalone_anime_name(
+    fetch_page: PageFetcher,
+    episode_url: str,
+    series_link: str | None,
+    title: str,
+) -> str | None:
+    """Resolve the anime name for a standalone episode URL.
+
+    Prefers the season/category title reached via the episode page's
+    "全集連結" link; falls back to the episode's own title (with its
+    trailing episode-number bracket stripped) when there's no such link,
+    or the category page can't be fetched or has no title of its own.
+    """
+
+    if series_link:
+        category_url = urljoin(episode_url, series_link)
+        try:
+            anime_name = parse_season_page(fetch_page(category_url)).anime_name
+        except AniCatError:
+            anime_name = None
+        if anime_name:
+            return anime_name
+
+    return strip_trailing_episode_number(title) or None
 
 
 def select_direct_video_source(soup: BeautifulSoup) -> str | None:
@@ -311,10 +359,10 @@ class Anime1MeExtractor:
 
         return collect_paginated_episode_urls(self.client.post_page, url)
 
-    def episode(self, url: str) -> Episode:
+    def episode(self, url: str, *, resolve_anime_name: bool = False) -> Episode:
         """Resolve one anime1.me episode via page data-apireq and API response."""
 
-        data_apireq, title = parse_episode_page(self.client.post_page(url))
+        data_apireq, title, series_link = parse_episode_page(self.client.post_page(url))
         response = self.client.post_api(data_apireq)
 
         try:
@@ -323,11 +371,17 @@ class Anime1MeExtractor:
             raise ParseError(f"API response is not JSON: {response.text}") from error
 
         stream_url = urljoin("https://v.anime1.me", parse_stream_url(payload))
+        anime_name = (
+            resolve_standalone_anime_name(self.client.post_page, url, series_link, title)
+            if resolve_anime_name
+            else None
+        )
         return Episode(
             page_url=url,
             title=title,
             stream_url=stream_url,
             cookies=extract_access_cookies(response),
+            anime_name=anime_name,
         )
 
 
@@ -342,15 +396,21 @@ class Anime1PwExtractor:
 
         return collect_paginated_episode_urls(self.client.get_page, url)
 
-    def episode(self, url: str) -> Episode:
+    def episode(self, url: str, *, resolve_anime_name: bool = False) -> Episode:
         """Resolve one anime1.pw episode directly from the page source tag."""
 
-        stream_url, title = parse_direct_episode_page(self.client.get_page(url), url)
+        stream_url, title, series_link = parse_direct_episode_page(self.client.get_page(url), url)
+        anime_name = (
+            resolve_standalone_anime_name(self.client.get_page, url, series_link, title)
+            if resolve_anime_name
+            else None
+        )
         return Episode(
             page_url=url,
             title=title,
             stream_url=stream_url,
             cookies={},
+            anime_name=anime_name,
         )
 
 
@@ -368,10 +428,10 @@ class Anime1Extractor:
 
         return self._extractor_for_url(url).season_episode_urls(url)
 
-    def episode(self, url: str) -> Episode:
+    def episode(self, url: str, *, resolve_anime_name: bool = False) -> Episode:
         """Resolve one supported episode URL into stream URL, title, and cookies."""
 
-        return self._extractor_for_url(url).episode(url)
+        return self._extractor_for_url(url).episode(url, resolve_anime_name=resolve_anime_name)
 
     def _extractor_for_url(self, url: str) -> EpisodeExtractor:
         """Return the extractor that owns the URL's supported source kind."""

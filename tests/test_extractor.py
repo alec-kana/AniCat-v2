@@ -1,11 +1,11 @@
 import unittest
-from typing import NoReturn
+from typing import ClassVar, NoReturn, cast
 from unittest.mock import patch
 
 import requests
 from bs4 import BeautifulSoup, FeatureNotFound
 
-from anicat.errors import ParseError
+from anicat.errors import FetchError, ParseError
 from anicat.extractor import (
     Anime1Extractor,
     extract_access_cookies,
@@ -16,6 +16,9 @@ from anicat.extractor import (
     parse_season_page,
     parse_set_cookie_header,
     parse_stream_url,
+    resolve_standalone_anime_name,
+    select_series_link,
+    strip_trailing_episode_number,
 )
 
 
@@ -35,6 +38,33 @@ class DirectPageClient:
 
     def post_api(self, data_apireq: str) -> NoReturn:
         raise AssertionError("anime1.pw extraction should not call post_api")
+
+
+class ApiResponseStub:
+    text = "{}"
+    headers: ClassVar[dict[str, str]] = {}
+
+    def __init__(self) -> None:
+        self.cookies = {"e": "1", "p": "2", "h": "3"}
+
+    def json(self) -> dict[str, dict[str, str]]:
+        return {"s": {"src": "//cdn.example/demo.mp4"}}
+
+
+class Anime1MeClient:
+    def __init__(self, pages: dict[str, str]) -> None:
+        self.pages = pages
+        self.post_calls: list[str] = []
+
+    def post_page(self, url: str) -> str:
+        self.post_calls.append(url)
+        return self.pages[url]
+
+    def get_page(self, url: str) -> NoReturn:
+        raise AssertionError("anime1.me extraction should not call get_page")
+
+    def post_api(self, data_apireq: str) -> requests.Response:
+        return cast(requests.Response, ApiResponseStub())
 
 
 class ExtractorTests(unittest.TestCase):
@@ -80,7 +110,7 @@ class ExtractorTests(unittest.TestCase):
         self.assertIsNone(parse_episode_number("Demo Anime"))
 
     def test_parse_episode_page_extracts_api_request_and_title(self):
-        data_apireq, title = parse_episode_page(
+        data_apireq, title, _series_link = parse_episode_page(
             """
             <h2 class="entry-title"> Demo Episode </h2>
             <video class="video-js" data-apireq="abc123"></video>
@@ -91,7 +121,7 @@ class ExtractorTests(unittest.TestCase):
         self.assertEqual(title, "Demo Episode")
 
     def test_parse_direct_episode_page_extracts_title_and_source(self):
-        stream_url, title = parse_direct_episode_page(
+        stream_url, title, _series_link = parse_direct_episode_page(
             """
             <h1 class="entry-title"> Direct Demo [06] </h1>
             <video class="video-js">
@@ -106,7 +136,7 @@ class ExtractorTests(unittest.TestCase):
 
     def test_parse_direct_episode_page_prefers_mp4_source_and_warns(self):
         with self.assertLogs("anicat.extractor", level="WARNING") as logs:
-            stream_url, title = parse_direct_episode_page(
+            stream_url, title, _series_link = parse_direct_episode_page(
                 """
                 <h1 class="entry-title"> Direct Demo [06] </h1>
                 <video class="video-js">
@@ -123,7 +153,7 @@ class ExtractorTests(unittest.TestCase):
         self.assertIn("1 MP4-compatible", logs.output[0])
 
     def test_parse_direct_episode_page_accepts_untyped_mp4_source(self):
-        stream_url, title = parse_direct_episode_page(
+        stream_url, title, _series_link = parse_direct_episode_page(
             """
             <h1 class="entry-title"> Direct Demo [06] </h1>
             <video class="video-js">
@@ -203,7 +233,7 @@ class ExtractorTests(unittest.TestCase):
             parse_episode_page('<h2 class="entry-title">Demo</h2>')
 
     def test_parse_episode_page_uses_first_video_with_api_request(self):
-        data_apireq, title = parse_episode_page(
+        data_apireq, title, _series_link = parse_episode_page(
             """
             <h2 class="entry-title">Demo</h2>
             <video class="video-js"></video>
@@ -216,7 +246,7 @@ class ExtractorTests(unittest.TestCase):
 
     def test_parse_episode_page_warns_when_multiple_video_candidates_exist(self):
         with self.assertLogs("anicat.extractor", level="WARNING") as logs:
-            data_apireq, title = parse_episode_page(
+            data_apireq, title, _series_link = parse_episode_page(
                 """
                 <h2 class="entry-title">Demo</h2>
                 <video class="video-js" data-apireq="first"></video>
@@ -345,6 +375,202 @@ class ExtractorTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ParseError, "no episode links"):
             Anime1Extractor(client).season_episode_urls("https://anime1.pw/?cat=60")
+
+    def test_select_series_link_finds_full_series_link_in_entry_content(self):
+        soup = parse_html('<div class="entry-content"><a href="?cat=1921">全集連結</a></div>')
+
+        self.assertEqual(select_series_link(soup), "?cat=1921")
+
+    def test_select_series_link_ignores_links_outside_entry_content(self):
+        soup = parse_html('<a href="?cat=1921">全集連結</a>')
+
+        self.assertIsNone(select_series_link(soup))
+
+    def test_select_series_link_ignores_unrelated_links_in_entry_content(self):
+        soup = parse_html('<div class="entry-content"><a href="/other">其他連結</a></div>')
+
+        self.assertIsNone(select_series_link(soup))
+
+    def test_strip_trailing_episode_number_removes_bracket_and_no_trailing_space(self):
+        stripped = strip_trailing_episode_number("Demo Anime [12]")
+
+        self.assertEqual(stripped, "Demo Anime")
+        self.assertFalse(stripped.endswith(" "))
+        self.assertEqual(
+            strip_trailing_episode_number("約會大作戰 II (第二季) [01]"), "約會大作戰 II (第二季)"
+        )
+
+    def test_strip_trailing_episode_number_leaves_non_matching_titles_unchanged(self):
+        self.assertEqual(strip_trailing_episode_number("Demo Anime"), "Demo Anime")
+        self.assertEqual(strip_trailing_episode_number("Demo Anime [SP]"), "Demo Anime [SP]")
+
+    def test_parse_episode_page_extracts_series_link(self):
+        _, _, series_link = parse_episode_page(
+            """
+            <div class="entry-content"><a href="?cat=1921">全集連結</a></div>
+            <h2 class="entry-title">Demo Episode [12]</h2>
+            <video class="video-js" data-apireq="abc123"></video>
+            """
+        )
+
+        self.assertEqual(series_link, "?cat=1921")
+
+    def test_parse_episode_page_series_link_is_none_when_absent(self):
+        _, _, series_link = parse_episode_page(
+            """
+            <h2 class="entry-title">Demo Episode</h2>
+            <video class="video-js" data-apireq="abc123"></video>
+            """
+        )
+
+        self.assertIsNone(series_link)
+
+    def test_parse_direct_episode_page_extracts_series_link(self):
+        _, _, series_link = parse_direct_episode_page(
+            """
+            <div class="entry-content"><a href="?cat=1921">全集連結</a></div>
+            <h1 class="entry-title">Direct Demo [06]</h1>
+            <video class="video-js">
+                <source src="//pwvideo.example/60/6.mp4" type="video/mp4">
+            </video>
+            """,
+            "https://anime1.pw/349",
+        )
+
+        self.assertEqual(series_link, "?cat=1921")
+
+    def test_resolve_standalone_anime_name_prefers_series_link_category_title(self):
+        def fetch_page(url: str) -> str:
+            self.assertEqual(url, "https://anime1.me/29592?cat=1921")
+            return '<h1 class="page-title">Demo Anime Full Title</h1>'
+
+        anime_name = resolve_standalone_anime_name(
+            fetch_page, "https://anime1.me/29592", "?cat=1921", "Demo Anime [12]"
+        )
+
+        self.assertEqual(anime_name, "Demo Anime Full Title")
+
+    def test_resolve_standalone_anime_name_falls_back_without_series_link(self):
+        def fetch_page(url: str) -> NoReturn:
+            raise AssertionError("should not fetch a category page without a series link")
+
+        anime_name = resolve_standalone_anime_name(
+            fetch_page, "https://anime1.me/29592", None, "Demo Anime [12]"
+        )
+
+        self.assertEqual(anime_name, "Demo Anime")
+
+    def test_resolve_standalone_anime_name_falls_back_when_category_fetch_fails(self):
+        def fetch_page(url: str) -> NoReturn:
+            raise FetchError("boom")
+
+        anime_name = resolve_standalone_anime_name(
+            fetch_page, "https://anime1.me/29592", "?cat=1921", "Demo Anime [12]"
+        )
+
+        self.assertEqual(anime_name, "Demo Anime")
+
+    def test_resolve_standalone_anime_name_falls_back_when_category_page_has_no_title(self):
+        anime_name = resolve_standalone_anime_name(
+            lambda url: "<html><body>no title here</body></html>",
+            "https://anime1.me/29592",
+            "?cat=1921",
+            "Demo Anime [12]",
+        )
+
+        self.assertEqual(anime_name, "Demo Anime")
+
+    def test_resolve_standalone_anime_name_returns_none_for_empty_fallback_title(self):
+        anime_name = resolve_standalone_anime_name(
+            lambda url: "", "https://anime1.me/1", None, "[12]"
+        )
+
+        self.assertIsNone(anime_name)
+
+    def test_anime1_me_episode_resolves_anime_name_via_series_link(self):
+        client = Anime1MeClient(
+            {
+                "https://anime1.me/29592": """
+                <div class="entry-content"><a href="?cat=1921">全集連結</a></div>
+                <h2 class="entry-title">Demo Anime [12]</h2>
+                <video class="video-js" data-apireq="abc123"></video>
+                """,
+                "https://anime1.me/29592?cat=1921": """
+                <h1 class="page-title">Demo Anime Full Title</h1>
+                <h2 class="entry-title">
+                    <a rel="bookmark" href="/1">Demo Anime Full Title [01]</a>
+                </h2>
+                """,
+            }
+        )
+
+        episode = Anime1Extractor(client).episode(
+            "https://anime1.me/29592", resolve_anime_name=True
+        )
+
+        self.assertEqual(episode.anime_name, "Demo Anime Full Title")
+        self.assertEqual(
+            client.post_calls,
+            ["https://anime1.me/29592", "https://anime1.me/29592?cat=1921"],
+        )
+
+    def test_anime1_me_episode_skips_anime_name_resolution_by_default(self):
+        client = Anime1MeClient(
+            {
+                "https://anime1.me/29592": """
+                <div class="entry-content"><a href="?cat=1921">全集連結</a></div>
+                <h2 class="entry-title">Demo Anime [12]</h2>
+                <video class="video-js" data-apireq="abc123"></video>
+                """,
+            }
+        )
+
+        episode = Anime1Extractor(client).episode("https://anime1.me/29592")
+
+        self.assertIsNone(episode.anime_name)
+        self.assertEqual(client.post_calls, ["https://anime1.me/29592"])
+
+    def test_anime1_me_episode_falls_back_to_title_without_series_link(self):
+        client = Anime1MeClient(
+            {
+                "https://anime1.me/29592": """
+                <h2 class="entry-title">Demo Anime [12]</h2>
+                <video class="video-js" data-apireq="abc123"></video>
+                """,
+            }
+        )
+
+        episode = Anime1Extractor(client).episode(
+            "https://anime1.me/29592", resolve_anime_name=True
+        )
+
+        self.assertEqual(episode.anime_name, "Demo Anime")
+        self.assertEqual(client.post_calls, ["https://anime1.me/29592"])
+
+    def test_anime1_pw_episode_resolves_anime_name_via_series_link(self):
+        client = DirectPageClient(
+            {
+                "https://anime1.pw/349": """
+                <div class="entry-content"><a href="?cat=60">全集連結</a></div>
+                <h1 class="entry-title">Direct Demo [06]</h1>
+                <video class="video-js">
+                    <source src="//pwvideo.example/60/6.mp4?h=token&e=1" type="video/mp4">
+                </video>
+                """,
+                "https://anime1.pw/349?cat=60": """
+                <h1 class="page-title">Direct Demo Full Title</h1>
+                <h2 class="entry-title"><a rel="bookmark" href="/349">Direct Demo [06]</a></h2>
+                """,
+            }
+        )
+
+        episode = Anime1Extractor(client).episode("https://anime1.pw/349", resolve_anime_name=True)
+
+        self.assertEqual(episode.anime_name, "Direct Demo Full Title")
+        self.assertEqual(
+            client.get_calls, ["https://anime1.pw/349", "https://anime1.pw/349?cat=60"]
+        )
+        self.assertEqual(client.post_calls, [])
 
 
 if __name__ == "__main__":
