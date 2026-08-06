@@ -87,6 +87,16 @@ class CliTests(unittest.TestCase):
         self.assertEqual(options.circuit_breaker_threshold, 8)
         self.assertEqual(options.circuit_breaker_cooldown, 90)
 
+    def test_no_pacing_zeroes_every_delay_and_wins_over_explicit_flags(self):
+        args = build_parser().parse_args(["--no-pacing", "--min-delay", "5", "https://anime1.me/1"])
+
+        options = options_from_args(args)
+
+        self.assertEqual(options.min_delay, 0.0)
+        self.assertEqual(options.max_delay, 0.0)
+        self.assertEqual(options.stagger, 0.0)
+        self.assertEqual(options.host_interval, 0.0)
+
     def test_inverted_delay_range_returns_argument_error(self):
         self.assertEqual(
             main(["--min-delay", "9", "--max-delay", "1", "https://anime1.me/1"]),

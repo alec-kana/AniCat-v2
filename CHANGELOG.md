@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 - 2026-08-06
 
 ### Added
 
@@ -10,7 +10,7 @@
 - 隨機化請求節奏：worker 起跑錯開、每集之間隨機間隔、所有 worker 共用的單一主機最小請求間隔，以及帶 jitter 的重試退避。
 - 遵守 `429`/`403` 回應的 `Retry-After` header（有上限保護）。
 - 單一主機連續 403 熔斷器，跳脫後暫停所有 worker 冷卻。
-- 新增 CLI 參數：`--min-delay`、`--max-delay`、`--stagger-start`、`--host-interval`、`--resolve-attempts`、`--retry-budget`、`--circuit-breaker-threshold`、`--circuit-breaker-cooldown`。
+- 新增 CLI 參數：`--no-pacing`、`--min-delay`、`--max-delay`、`--stagger-start`、`--host-interval`、`--resolve-attempts`、`--retry-budget`、`--circuit-breaker-threshold`、`--circuit-breaker-cooldown`。
 - 公開 API 新增 `AccessDeniedError`，帶有 status code、回應 header 與 `bot_mitigation` 分類。
 - 請求被拒時會記錄診斷資訊（狀態碼、`server`/`cf-ray` 等 header、是否帶 Referer 與 cookie 名稱），但不記錄任何簽章值。
 
@@ -18,8 +18,8 @@
 
 - `anime1.pw` 頁面解析改用 GET 抓取 HTML，避免依賴 WordPress / Cloudflare 對 POST 頁面請求的相容行為。
 - direct video parser 會優先選擇 `video/mp4` source；若頁面提供多個 source 會記錄 warning。
-- `--concurrency` 預設值由 `3` 降為 `2`。
 - 重試退避由固定的指數改為 full jitter，避免可辨識的機械式重試節奏。
+- `anicat --version` 改為讀取已安裝套件的 metadata，不再是寫死的字串，避免與 `pyproject.toml` 不同步（先前固定顯示 `0.1.0`）。
 
 ### Fixed
 
