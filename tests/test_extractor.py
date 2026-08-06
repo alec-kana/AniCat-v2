@@ -36,7 +36,7 @@ class DirectPageClient:
         self.post_calls.append(url)
         return self.pages[url]
 
-    def post_api(self, data_apireq: str) -> NoReturn:
+    def post_api(self, data_apireq: str, *, page_url: str | None = None) -> NoReturn:
         raise AssertionError("anime1.pw extraction should not call post_api")
 
 
@@ -55,6 +55,7 @@ class Anime1MeClient:
     def __init__(self, pages: dict[str, str]) -> None:
         self.pages = pages
         self.post_calls: list[str] = []
+        self.api_page_urls: list[str | None] = []
 
     def post_page(self, url: str) -> str:
         self.post_calls.append(url)
@@ -63,7 +64,8 @@ class Anime1MeClient:
     def get_page(self, url: str) -> NoReturn:
         raise AssertionError("anime1.me extraction should not call get_page")
 
-    def post_api(self, data_apireq: str) -> requests.Response:
+    def post_api(self, data_apireq: str, *, page_url: str | None = None) -> requests.Response:
+        self.api_page_urls.append(page_url)
         return cast(requests.Response, ApiResponseStub())
 
 
@@ -513,6 +515,7 @@ class ExtractorTests(unittest.TestCase):
             client.post_calls,
             ["https://anime1.me/29592", "https://anime1.me/29592?cat=1921"],
         )
+        self.assertEqual(client.api_page_urls, ["https://anime1.me/29592"])
 
     def test_anime1_me_episode_skips_anime_name_resolution_by_default(self):
         client = Anime1MeClient(

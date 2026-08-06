@@ -6,7 +6,7 @@ from tempfile import TemporaryDirectory
 import requests
 
 from anicat.downloader import download_episode, sanitize_filename
-from anicat.errors import DownloadError
+from anicat.errors import AccessDeniedError, DownloadError, FetchError
 from anicat.models import Episode
 
 
@@ -48,6 +48,7 @@ class FakeClient:
     def __init__(self, response: FakeResponse) -> None:
         self.response = response
         self.calls: list[dict[str, str]] = []
+        self.page_urls: list[str | None] = []
 
     def stream_video(
         self,
@@ -55,15 +56,18 @@ class FakeClient:
         *,
         cookies: Mapping[str, str],
         headers: Mapping[str, str] | None = None,
+        page_url: str | None = None,
     ) -> FakeResponse:
         self.calls.append(dict(headers or {}))
+        self.page_urls.append(page_url)
         return self.response
 
 
 class SequentialClient:
-    def __init__(self, responses: list[FakeResponse]) -> None:
+    def __init__(self, responses: list[FakeResponse | Exception]) -> None:
         self.responses = responses
         self.calls: list[dict[str, str]] = []
+        self.page_urls: list[str | None] = []
 
     def stream_video(
         self,
@@ -71,9 +75,14 @@ class SequentialClient:
         *,
         cookies: Mapping[str, str],
         headers: Mapping[str, str] | None = None,
+        page_url: str | None = None,
     ) -> FakeResponse:
         self.calls.append(dict(headers or {}))
-        return self.responses.pop(0)
+        self.page_urls.append(page_url)
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
 
 
 class DownloaderTests(unittest.TestCase):
@@ -294,6 +303,77 @@ class DownloaderTests(unittest.TestCase):
                 )
 
             self.assertEqual((Path(directory) / "Demo.mp4.part").read_bytes(), b"abc")
+
+    def test_download_passes_the_episode_page_url_for_hotlink_headers(self):
+        response = FakeResponse(b"abcdef", headers={"content-length": "6"})
+        client = FakeClient(response)
+        episode = Episode(
+            page_url="https://anime1.me/29592",
+            title="Demo",
+            stream_url="https://v.anime1.me/demo.mp4",
+            cookies={},
+        )
+
+        with TemporaryDirectory() as directory:
+            download_episode(client, episode, Path(directory), chunk_size=6)
+
+        self.assertEqual(client.page_urls, ["https://anime1.me/29592"])
+
+    def test_download_retries_a_fetch_error_raised_by_the_client(self):
+        # FetchError is not a requests exception, so this path used to escape
+        # the resume loop entirely.
+        second_response = FakeResponse(
+            b"def",
+            status_code=206,
+            headers={"content-range": "bytes 3-5/6"},
+        )
+        client = SequentialClient([FetchError("connection reset"), second_response])
+        episode = Episode(
+            page_url="https://anime1.me/1",
+            title="Demo",
+            stream_url="https://cdn.example/demo.mp4",
+            cookies={},
+        )
+
+        with TemporaryDirectory() as directory:
+            part_path = Path(directory) / "Demo.mp4.part"
+            part_path.write_bytes(b"abc")
+
+            result = download_episode(
+                client,
+                episode,
+                Path(directory),
+                chunk_size=3,
+                stream_retries=1,
+            )
+
+            self.assertEqual(result.path.read_bytes(), b"abcdef")
+            self.assertEqual(len(client.calls), 2)
+
+    def test_download_hands_a_denial_straight_back_without_byte_level_retries(self):
+        client = SequentialClient([AccessDeniedError("denied", status_code=403)])
+        episode = Episode(
+            page_url="https://anime1.me/1",
+            title="Demo",
+            stream_url="https://cdn.example/demo.mp4",
+            cookies={},
+        )
+
+        with TemporaryDirectory() as directory:
+            part_path = Path(directory) / "Demo.mp4.part"
+            part_path.write_bytes(b"abc")
+
+            with self.assertRaises(AccessDeniedError):
+                download_episode(
+                    client,
+                    episode,
+                    Path(directory),
+                    chunk_size=3,
+                    stream_retries=5,
+                )
+
+            self.assertEqual(len(client.calls), 1)
+            self.assertEqual(part_path.read_bytes(), b"abc")
 
     def test_incomplete_download_keeps_part_file(self):
         response = FakeResponse(b"abc", headers={"content-length": "5"})

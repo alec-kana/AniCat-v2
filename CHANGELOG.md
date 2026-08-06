@@ -5,15 +5,27 @@
 ### Added
 
 - 支援 `anime1.pw` 單集、`?cat=` 分類頁與 slug 分類頁下載；此來源直接解析頁面 MP4 source，沿用現有 Range 續傳下載流程。
+- 所有請求都會帶上與目標 URL 一致的 `Referer` / `Origin` / `Sec-Fetch-*`（依瀏覽器預設的 `strict-origin-when-cross-origin` referrer policy 推導）；CDN 影片請求以該集頁面為來源，修正 hotlink 保護直接回 403 的問題。
+- 403 分類與自動復原：簽章憑證過期時會重新解析該集取得新憑證，並從 `.part` 既有位元組接續；被反機器人保護擋下時改為長時間退避，並回報可行動的訊息而非泛用錯誤。
+- 隨機化請求節奏：worker 起跑錯開、每集之間隨機間隔、所有 worker 共用的單一主機最小請求間隔，以及帶 jitter 的重試退避。
+- 遵守 `429`/`403` 回應的 `Retry-After` header（有上限保護）。
+- 單一主機連續 403 熔斷器，跳脫後暫停所有 worker 冷卻。
+- 新增 CLI 參數：`--min-delay`、`--max-delay`、`--stagger-start`、`--host-interval`、`--resolve-attempts`、`--retry-budget`、`--circuit-breaker-threshold`、`--circuit-breaker-cooldown`。
+- 公開 API 新增 `AccessDeniedError`，帶有 status code、回應 header 與 `bot_mitigation` 分類。
+- 請求被拒時會記錄診斷資訊（狀態碼、`server`/`cf-ray` 等 header、是否帶 Referer 與 cookie 名稱），但不記錄任何簽章值。
 
 ### Changed
 
 - `anime1.pw` 頁面解析改用 GET 抓取 HTML，避免依賴 WordPress / Cloudflare 對 POST 頁面請求的相容行為。
 - direct video parser 會優先選擇 `video/mp4` source；若頁面提供多個 source 會記錄 warning。
+- `--concurrency` 預設值由 `3` 降為 `2`。
+- 重試退避由固定的指數改為 full jitter，避免可辨識的機械式重試節奏。
 
 ### Fixed
 
 - 分類頁 HTML 無法解析出 episode link 時改為回報 `ParseError`，避免 selector 失效時 silent 回傳 0 集。
+- 下載中發生的 `FetchError` 現在會被 downloader 的續傳重試路徑接住；先前因為 `FetchError` 不是 `requests.RequestException`，這條重試路徑對 client 端錯誤形同虛設。
+- 403 不再以完全相同、且已被拒絕的請求盲目重試耗盡 retry 次數。
 
 ## 0.1.0 - 2026-05-24
 

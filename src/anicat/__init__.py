@@ -3,12 +3,13 @@
 import logging
 
 from .client import Anime1Client
-from .errors import AniCatError, DownloadError, FetchError, ParseError
+from .errors import AccessDeniedError, AniCatError, DownloadError, FetchError, ParseError
 from .models import DownloadProgressEvent, DownloadResult, Episode, EpisodeJob, JobReport
 from .options import DownloadOptions
 from .service import AniCatService
 
 __all__ = [
+    "AccessDeniedError",
     "AniCatError",
     "AniCatService",
     "Anime1Client",
