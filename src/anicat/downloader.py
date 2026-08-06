@@ -10,7 +10,8 @@ from typing import Literal, Protocol
 import requests
 
 from .constants import DEFAULT_CHUNK_SIZE, DEFAULT_MAX_FILENAME_STEM_LENGTH
-from .errors import DownloadError
+from .errors import AccessDeniedError, DownloadError, FetchError
+from .headers import header_value
 from .models import DownloadProgressEvent, DownloadResult, Episode, VideoStreamResponse
 
 INVALID_FILENAME_PATTERN = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
@@ -66,6 +67,7 @@ class VideoSource(Protocol):
         *,
         cookies: Mapping[str, str],
         headers: Mapping[str, str] | None = None,
+        page_url: str | None = None,
     ) -> VideoStreamResponse:
         """Return a streaming video response for the given CDN URL."""
 
@@ -195,6 +197,8 @@ def _open_video_stream(
         episode.stream_url,
         cookies=episode.cookies,
         headers=_request_headers(resume_from, validator),
+        # CDN hotlink protection checks the Referer derived from this page.
+        page_url=episode.page_url,
     )
 
 
@@ -225,8 +229,10 @@ def _download_stream(
                 progress=progress,
                 state=state,
             )
-        except (DownloadError, requests.RequestException) as error:
-            if attempt >= retry_limit:
+        except (DownloadError, FetchError, requests.RequestException) as error:
+            # Stale credentials are not a transport hiccup; only the caller can
+            # fix them by re-resolving, and the .part file is left for it.
+            if attempt >= retry_limit or isinstance(error, AccessDeniedError):
                 raise
 
             resume_from = _current_partial_size(part_path)
@@ -340,7 +346,7 @@ def _validate_resume_response(
     if status_code != 206:
         raise DownloadError(f"resume request returned unexpected status {status_code}")
 
-    range_info = _parse_content_range(_header_value(headers, "Content-Range"))
+    range_info = _parse_content_range(header_value(headers, "Content-Range"))
     if range_info is None:
         raise DownloadError("resumed response is missing valid Content-Range")
 
@@ -383,7 +389,7 @@ def _resolve_total_bytes(
     if status_code == 206 and range_info is not None:
         return range_info[2]
 
-    content_length = _header_value(headers, "Content-Length")
+    content_length = header_value(headers, "Content-Length")
     if content_length and content_length.isdigit():
         return resume_from + int(content_length)
     return None
@@ -392,16 +398,7 @@ def _resolve_total_bytes(
 def _stream_validator(headers: Mapping[str, str]) -> str | None:
     """Return a strong-enough If-Range validator from response headers."""
 
-    return _header_value(headers, "ETag") or _header_value(headers, "Last-Modified")
-
-
-def _header_value(headers: Mapping[str, str], name: str) -> str | None:
-    """Return a response header value case-insensitively."""
-
-    for key, value in headers.items():
-        if key.lower() == name.lower():
-            return value
-    return None
+    return header_value(headers, "ETag") or header_value(headers, "Last-Modified")
 
 
 def _write_mode(resume_from: int) -> WriteMode:

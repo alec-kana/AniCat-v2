@@ -53,6 +53,46 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(options_from_args(args).request_timeout, (2, 9))
 
+    def test_pacing_and_recovery_flags_reach_options(self):
+        args = build_parser().parse_args(
+            [
+                "--min-delay",
+                "2",
+                "--max-delay",
+                "6",
+                "--stagger-start",
+                "3",
+                "--host-interval",
+                "1.5",
+                "--resolve-attempts",
+                "5",
+                "--retry-budget",
+                "120",
+                "--circuit-breaker-threshold",
+                "8",
+                "--circuit-breaker-cooldown",
+                "90",
+                "https://anime1.me/1",
+            ]
+        )
+
+        options = options_from_args(args)
+
+        self.assertEqual(options.min_delay, 2)
+        self.assertEqual(options.max_delay, 6)
+        self.assertEqual(options.stagger, 3)
+        self.assertEqual(options.host_interval, 1.5)
+        self.assertEqual(options.resolve_attempts, 5)
+        self.assertEqual(options.retry_budget, 120)
+        self.assertEqual(options.circuit_breaker_threshold, 8)
+        self.assertEqual(options.circuit_breaker_cooldown, 90)
+
+    def test_inverted_delay_range_returns_argument_error(self):
+        self.assertEqual(
+            main(["--min-delay", "9", "--max-delay", "1", "https://anime1.me/1"]),
+            EXIT_USAGE,
+        )
+
     def test_verbose_flag_counts_diagnostic_level(self):
         args = build_parser().parse_args(["-vv", "https://anime1.me/1"])
 

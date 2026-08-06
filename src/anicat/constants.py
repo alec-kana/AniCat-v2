@@ -3,7 +3,8 @@ from __future__ import annotations
 API_URL = "https://v.anime1.me/api"
 DEFAULT_OUTPUT_DIR_NAME = "anime1"
 
-DEFAULT_CONCURRENCY = 3
+# Anime1 CDNs rate-limit aggressively, so the safe default is conservative.
+DEFAULT_CONCURRENCY = 2
 DEFAULT_CONNECT_TIMEOUT = 10.0
 DEFAULT_READ_TIMEOUT = 30.0
 DEFAULT_RETRIES = 3
@@ -15,4 +16,21 @@ DEFAULT_MAX_FILENAME_STEM_LENGTH = 180
 PROGRESS_TITLE_MAX_LENGTH = 42
 PLAIN_PROGRESS_ENV_VAR = "ANICAT_PLAIN_PROGRESS"
 
+# Pacing. The host interval is what prevents simultaneous requests; the
+# per-episode delays only break up cadence, so they stay short.
+DEFAULT_MIN_DELAY = 0.5
+DEFAULT_MAX_DELAY = 2.0
+DEFAULT_STAGGER = 2.0
+DEFAULT_HOST_INTERVAL = 0.5
+DEFAULT_MAX_BACKOFF = 30.0
+MAX_RETRY_AFTER = 120.0
+
+# Recovery: bounded re-resolution of expired credentials, then give up.
+DEFAULT_RESOLVE_ATTEMPTS = 3
+DEFAULT_RETRY_BUDGET = 600.0
+DEFAULT_BLOCKED_BACKOFF = 15.0
+DEFAULT_CIRCUIT_BREAKER_THRESHOLD = 5
+DEFAULT_CIRCUIT_BREAKER_COOLDOWN = 60.0
+
+FORBIDDEN_STATUS_CODE = 403
 RETRY_STATUS_CODES = frozenset({429, 500, 502, 503, 504})

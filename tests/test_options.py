@@ -15,6 +15,14 @@ class DownloadOptionsTests(unittest.TestCase):
             {"connect_timeout": -1},
             {"retries": -1},
             {"chunk_size": 0},
+            {"min_delay": -1},
+            {"min_delay": 5, "max_delay": 1},
+            {"stagger": -1},
+            {"host_interval": -1},
+            {"resolve_attempts": 0},
+            {"retry_budget": 0},
+            {"circuit_breaker_threshold": -1},
+            {"circuit_breaker_cooldown": -1},
         ]
 
         for kwargs in cases:

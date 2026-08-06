@@ -56,7 +56,7 @@ class EpisodeSource(Protocol):
 
         ...
 
-    def post_api(self, data_apireq: str) -> requests.Response:
+    def post_api(self, data_apireq: str, *, page_url: str | None = None) -> requests.Response:
         """Return raw response for an Anime1 episode API payload."""
 
         ...
@@ -284,7 +284,23 @@ def extract_access_cookies(response: requests.Response) -> dict[str, str]:
     if missing:
         raise ParseError(f"API response is missing access cookies: {', '.join(missing)}")
 
+    log_access_cookie_lifetimes(response)
     return cookies
+
+
+def log_access_cookie_lifetimes(response: requests.Response) -> None:
+    """Log signed-cookie names and expiry attributes, never their values."""
+
+    if not LOGGER.isEnabledFor(logging.DEBUG):
+        return
+
+    parsed = parse_set_cookie_header(response.headers.get("set-cookie", ""))
+    lifetimes = {
+        name: morsel["max-age"] or morsel["expires"] or "session"
+        for name in ACCESS_COOKIE_NAMES
+        if (morsel := parsed.get(name)) is not None
+    }
+    LOGGER.debug("Access cookie lifetimes: %s", lifetimes or "<not advertised>")
 
 
 def parse_set_cookie_header(header: str) -> SimpleCookie:
@@ -363,7 +379,8 @@ class Anime1MeExtractor:
         """Resolve one anime1.me episode via page data-apireq and API response."""
 
         data_apireq, title, series_link = parse_episode_page(self.client.post_page(url))
-        response = self.client.post_api(data_apireq)
+        # The API expects the Referer/Origin the embedded player would send.
+        response = self.client.post_api(data_apireq, page_url=url)
 
         try:
             payload = response.json()

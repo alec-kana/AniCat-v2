@@ -19,6 +19,8 @@ AniCat-v2 是一個專注於 Anime1 下載體驗的 CLI 工具。它可以把單
 
 - **串流中斷重試**：使用 Range request 重新接續，並驗證 `Content-Range`。
 
+- **403 自動復原**：CDN 的簽章憑證（`e`/`p`/`h` cookie）過期而回 403 時，會自動重新解析該集取得新憑證，並從 `.part` 既有的位元組位置接續下載，而不是整集重來或直接失敗。
+
 - **支援來源**
 
     | 來源 | 單集 URL | 分類 / 季度 URL | 狀態 |
@@ -132,11 +134,19 @@ anicat URL [URL ...] [OPTIONS]
 |---|---|---|
 | `-o`, `--output DIR` | 指定輸出資料夾（每部動畫會依 `h1.page-title` 解析出的名稱各自建立子資料夾） | `./anime1` |
 | `-e`, `--episodes SPEC` | 只下載分類/季度 URL 中指定的集數，例如 `15-17` 或 `1,3,5-8`；直接輸入的單集 URL 不受此篩選影響。若指定的集數在該分類找不到，會印出警告訊息 | 不限制 |
-| `-c`, `--concurrency N` | 併發下載數 | `3` |
+| `-c`, `--concurrency N` | 併發下載數。調高併發是最常見的 403 成因，整季批次下載建議維持 `1`~`2` | `2` |
 | `--timeout SECONDS` | HTTP 讀取逾時秒數 | `30` |
 | `--connect-timeout SECONDS` | HTTP 連線逾時秒數 | `10` |
 | `--retries N` | HTTP 與串流中斷重試次數 | `3` |
 | `--chunk-size BYTES` | 下載分塊大小 | `524288` |
+| `--min-delay SECONDS` | 同一個 worker 下載完一集後，抓下一集前的最短隨機等待 | `0.5` |
+| `--max-delay SECONDS` | 同上的最長隨機等待 | `2` |
+| `--stagger-start SECONDS` | 每個 worker 第一個請求前的最大隨機等待，避免整批同時開連線 | `2` |
+| `--host-interval SECONDS` | 所有 worker 對同一主機的最小請求間隔 | `0.5` |
+| `--resolve-attempts N` | 遇到 403 後重新解析該集、換取新簽章憑證的次數 | `3` |
+| `--retry-budget SECONDS` | 單集全部復原嘗試的總時間上限 | `600` |
+| `--circuit-breaker-threshold N` | 同一主機連續幾次 403 後暫停所有 worker，`0` 為關閉 | `5` |
+| `--circuit-breaker-cooldown SECONDS` | 熔斷後的暫停時間 | `60` |
 | `--overwrite` | 覆寫已完成的同名檔案 | `False` |
 | `--no-resume` | 不沿用既有 `.part` 暫存檔 | `False` |
 | `--no-progress` | 關閉進度列 | `False` |
@@ -174,6 +184,22 @@ a-shell 每次開新視窗都會自動執行 `~/Documents/.profile`（檔案不�
 ```bash
 echo 'export ANICAT_PLAIN_PROGRESS=1' >> ~/Documents/.profile
 ```
+
+### 遇到 403 下載失敗時
+
+Anime1 的 CDN 會用兩種完全不同的機制回 403，AniCat-v2 會分開處理、也會在訊息裡分開講：
+
+1. **簽章憑證過期**：影片網址帶的簽章 cookie 有時效，長片或慢速連線很容易在下載中途過期。這種情況會自動重新解析該集、換到新的憑證，再從已下載的位元組數接續，不需要任何處理。用 `--resolve-attempts` 調整嘗試次數。
+
+2. **被反機器人保護擋下**：這時重試同一個請求沒有意義，訊息會直接寫 `blocked by anti-bot protection`。可以降低 `--concurrency`、把 `--min-delay` / `--max-delay` 調大，或稍後再試。若同一主機連續被擋，熔斷器會自動暫停所有 worker 一段時間，避免越撞越久。
+
+避免同時併發的主要機制是 `--host-interval`（所有 worker 對同一主機的最小請求間隔），每集之間的 0.5~2 秒隨機等待只是額外打散節奏，因此刻意設得很短。每個 worker 開跑前也會隨機錯開最多 2 秒。若你確定來源沒有限制、想要最快速度，把延遲關掉即可：
+
+```bash
+anicat https://anime1.me/category/your-category-slug --min-delay 0 --max-delay 0 --stagger-start 0 --host-interval 0
+```
+
+想知道 403 到底是哪一種，加 `-v` 會印出回應狀態與 `server` / `cf-ray` 等診斷 header，以及該請求有沒有帶 Referer 和 cookie（只印 cookie 名稱，不會印簽章內容）。
 
 ## 進階說明
 

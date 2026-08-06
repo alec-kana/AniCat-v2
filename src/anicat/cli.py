@@ -10,11 +10,19 @@ from pathlib import Path
 from . import __version__
 from .constants import (
     DEFAULT_CHUNK_SIZE,
+    DEFAULT_CIRCUIT_BREAKER_COOLDOWN,
+    DEFAULT_CIRCUIT_BREAKER_THRESHOLD,
     DEFAULT_CONCURRENCY,
     DEFAULT_CONNECT_TIMEOUT,
+    DEFAULT_HOST_INTERVAL,
+    DEFAULT_MAX_DELAY,
+    DEFAULT_MIN_DELAY,
     DEFAULT_OUTPUT_DIR_NAME,
     DEFAULT_READ_TIMEOUT,
+    DEFAULT_RESOLVE_ATTEMPTS,
     DEFAULT_RETRIES,
+    DEFAULT_RETRY_BUDGET,
+    DEFAULT_STAGGER,
     PLAIN_PROGRESS_ENV_VAR,
 )
 from .errors import AniCatError
@@ -85,7 +93,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--concurrency",
         type=int,
         default=DEFAULT_CONCURRENCY,
-        help=f"Concurrent episode downloads. Default: {DEFAULT_CONCURRENCY}",
+        help=(
+            f"Concurrent episode downloads. Default: {DEFAULT_CONCURRENCY}. "
+            "High concurrency with no delay is the most common cause of 403 storms; "
+            "prefer 1-2 for large season batches."
+        ),
     )
     parser.add_argument(
         "--timeout",
@@ -110,6 +122,85 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_CHUNK_SIZE,
         help=f"Download chunk size in bytes. Default: {DEFAULT_CHUNK_SIZE}",
+    )
+    pacing_group = parser.add_argument_group(
+        "pacing",
+        "Randomized request pacing. Trades throughput for a request cadence that "
+        "does not look automated. Set the delays to 0 to download as fast as possible.",
+    )
+    pacing_group.add_argument(
+        "--min-delay",
+        type=float,
+        default=DEFAULT_MIN_DELAY,
+        metavar="SECONDS",
+        help=f"Minimum wait between episodes on one worker. Default: {DEFAULT_MIN_DELAY:g}",
+    )
+    pacing_group.add_argument(
+        "--max-delay",
+        type=float,
+        default=DEFAULT_MAX_DELAY,
+        metavar="SECONDS",
+        help=f"Maximum wait between episodes on one worker. Default: {DEFAULT_MAX_DELAY:g}",
+    )
+    pacing_group.add_argument(
+        "--stagger-start",
+        type=float,
+        default=DEFAULT_STAGGER,
+        metavar="SECONDS",
+        help=(
+            "Maximum random wait before each worker's first request, so a batch does "
+            f"not open every connection at once. Default: {DEFAULT_STAGGER:g}"
+        ),
+    )
+    pacing_group.add_argument(
+        "--host-interval",
+        type=float,
+        default=DEFAULT_HOST_INTERVAL,
+        metavar="SECONDS",
+        help=(
+            "Minimum gap between requests to one host across all workers. "
+            f"Default: {DEFAULT_HOST_INTERVAL:g}"
+        ),
+    )
+    recovery_group = parser.add_argument_group(
+        "recovery",
+        "How hard to work at recovering from HTTP 403 denials before giving up.",
+    )
+    recovery_group.add_argument(
+        "--resolve-attempts",
+        type=int,
+        default=DEFAULT_RESOLVE_ATTEMPTS,
+        metavar="N",
+        help=(
+            "Times to re-resolve an episode for fresh access credentials after a 403. "
+            f"Default: {DEFAULT_RESOLVE_ATTEMPTS}"
+        ),
+    )
+    recovery_group.add_argument(
+        "--retry-budget",
+        type=float,
+        default=DEFAULT_RETRY_BUDGET,
+        metavar="SECONDS",
+        help=f"Total wall-clock recovery time per episode. Default: {DEFAULT_RETRY_BUDGET:g}",
+    )
+    recovery_group.add_argument(
+        "--circuit-breaker-threshold",
+        type=int,
+        default=DEFAULT_CIRCUIT_BREAKER_THRESHOLD,
+        metavar="N",
+        help=(
+            "Consecutive denials from one host before pausing all workers. "
+            f"0 disables. Default: {DEFAULT_CIRCUIT_BREAKER_THRESHOLD}"
+        ),
+    )
+    recovery_group.add_argument(
+        "--circuit-breaker-cooldown",
+        type=float,
+        default=DEFAULT_CIRCUIT_BREAKER_COOLDOWN,
+        metavar="SECONDS",
+        help=(
+            f"Pause duration once the breaker trips. Default: {DEFAULT_CIRCUIT_BREAKER_COOLDOWN:g}"
+        ),
     )
     parser.add_argument(
         "--no-resume",
@@ -246,6 +337,14 @@ def options_from_args(args: argparse.Namespace) -> DownloadOptions:
         overwrite=args.overwrite,
         progress=not args.no_progress,
         plain_progress=args.plain_progress,
+        min_delay=args.min_delay,
+        max_delay=args.max_delay,
+        stagger=args.stagger_start,
+        host_interval=args.host_interval,
+        resolve_attempts=args.resolve_attempts,
+        retry_budget=args.retry_budget,
+        circuit_breaker_threshold=args.circuit_breaker_threshold,
+        circuit_breaker_cooldown=args.circuit_breaker_cooldown,
     )
 
 
