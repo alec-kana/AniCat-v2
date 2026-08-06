@@ -1,12 +1,5 @@
 # Changelog
 
-## 0.3.1 - 2026-08-06
-
-### Changed
-
-- 已下載過的集數現在只做一次頁面請求就跳過，不再多打一次 stream API 索取用不到的簽章憑證。重跑整季抓新集數時，每個已存在的檔案省下一次請求與相應的主機間隔等待。
-- 集數解析拆成兩階段（`episode_page` 解析頁面身分、`resolve_stream` 取得串流），`Anime1Extractor.episode()` 行為不變。
-
 ## 0.3.0 - 2026-08-06
 
 ### Added
@@ -27,6 +20,8 @@
 - direct video parser 會優先選擇 `video/mp4` source；若頁面提供多個 source 會記錄 warning。
 - 重試退避由固定的指數改為 full jitter，避免可辨識的機械式重試節奏。
 - `anicat --version` 改為讀取已安裝套件的 metadata，不再是寫死的字串，避免與 `pyproject.toml` 不同步（先前固定顯示 `0.1.0`）。
+- 已下載過的集數現在只做一次頁面請求就跳過，不再多打一次 stream API 索取用不到的簽章憑證。重跑整季抓新集數時，每個已存在的檔案省下一次請求與相應的主機間隔等待。
+- 集數解析拆成兩階段（`episode_page` 解析頁面身分、`resolve_stream` 取得串流），`Anime1Extractor.episode()` 行為不變。
 
 ### Fixed
 
