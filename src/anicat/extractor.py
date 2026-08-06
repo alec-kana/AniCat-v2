@@ -43,6 +43,33 @@ class SeasonEpisodes:
     episode_numbers: list[int | None] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class EpisodePage:
+    """Episode identity parsed from its page, before the stream is resolved.
+
+    Resolving in two phases lets a caller decide the output filename, and so
+    skip an episode it already has, without minting stream credentials it
+    would immediately throw away. ``data_apireq`` and ``stream_url`` carry
+    whatever the owning extractor needs to finish the job.
+    """
+
+    page_url: str
+    title: str
+    anime_name: str | None = None
+    data_apireq: str | None = None
+    stream_url: str | None = None
+
+    def unresolved_episode(self) -> Episode:
+        """Return episode metadata with no stream, for reporting a skipped download."""
+
+        return Episode(
+            page_url=self.page_url,
+            title=self.title,
+            stream_url="",
+            anime_name=self.anime_name,
+        )
+
+
 class EpisodeSource(Protocol):
     """Minimal HTTP dependency required by Anime1Extractor."""
 
@@ -70,8 +97,13 @@ class EpisodeExtractor(Protocol):
 
         ...
 
-    def episode(self, url: str, *, resolve_anime_name: bool = False) -> Episode:
-        """Resolve one episode page URL into download-ready metadata."""
+    def episode_page(self, url: str, *, resolve_anime_name: bool = False) -> EpisodePage:
+        """Parse an episode page into its identity, without resolving the stream."""
+
+        ...
+
+    def resolve_stream(self, page: EpisodePage) -> Episode:
+        """Complete a parsed episode page into download-ready metadata."""
 
         ...
 
@@ -375,30 +407,42 @@ class Anime1MeExtractor:
 
         return collect_paginated_episode_urls(self.client.post_page, url)
 
-    def episode(self, url: str, *, resolve_anime_name: bool = False) -> Episode:
-        """Resolve one anime1.me episode via page data-apireq and API response."""
+    def episode_page(self, url: str, *, resolve_anime_name: bool = False) -> EpisodePage:
+        """Parse one anime1.me episode page into its identity and API payload."""
 
         data_apireq, title, series_link = parse_episode_page(self.client.post_page(url))
+        anime_name = (
+            resolve_standalone_anime_name(self.client.post_page, url, series_link, title)
+            if resolve_anime_name
+            else None
+        )
+        return EpisodePage(
+            page_url=url,
+            title=title,
+            anime_name=anime_name,
+            data_apireq=data_apireq,
+        )
+
+    def resolve_stream(self, page: EpisodePage) -> Episode:
+        """Resolve anime1.me stream URL and access cookies from the API."""
+
+        if page.data_apireq is None:
+            raise ParseError(f"episode page is missing video data-apireq: {page.page_url}")
+
         # The API expects the Referer/Origin the embedded player would send.
-        response = self.client.post_api(data_apireq, page_url=url)
+        response = self.client.post_api(page.data_apireq, page_url=page.page_url)
 
         try:
             payload = response.json()
         except ValueError as error:
             raise ParseError(f"API response is not JSON: {response.text}") from error
 
-        stream_url = urljoin("https://v.anime1.me", parse_stream_url(payload))
-        anime_name = (
-            resolve_standalone_anime_name(self.client.post_page, url, series_link, title)
-            if resolve_anime_name
-            else None
-        )
         return Episode(
-            page_url=url,
-            title=title,
-            stream_url=stream_url,
+            page_url=page.page_url,
+            title=page.title,
+            stream_url=urljoin("https://v.anime1.me", parse_stream_url(payload)),
             cookies=extract_access_cookies(response),
-            anime_name=anime_name,
+            anime_name=page.anime_name,
         )
 
 
@@ -413,8 +457,8 @@ class Anime1PwExtractor:
 
         return collect_paginated_episode_urls(self.client.get_page, url)
 
-    def episode(self, url: str, *, resolve_anime_name: bool = False) -> Episode:
-        """Resolve one anime1.pw episode directly from the page source tag."""
+    def episode_page(self, url: str, *, resolve_anime_name: bool = False) -> EpisodePage:
+        """Parse one anime1.pw episode page, which already exposes its source URL."""
 
         stream_url, title, series_link = parse_direct_episode_page(self.client.get_page(url), url)
         anime_name = (
@@ -422,12 +466,25 @@ class Anime1PwExtractor:
             if resolve_anime_name
             else None
         )
-        return Episode(
+        return EpisodePage(
             page_url=url,
             title=title,
-            stream_url=stream_url,
-            cookies={},
             anime_name=anime_name,
+            stream_url=stream_url,
+        )
+
+    def resolve_stream(self, page: EpisodePage) -> Episode:
+        """Return anime1.pw episode metadata; the page fetch already resolved it."""
+
+        if page.stream_url is None:
+            raise ParseError(f"episode page is missing MP4 video source: {page.page_url}")
+
+        return Episode(
+            page_url=page.page_url,
+            title=page.title,
+            stream_url=page.stream_url,
+            cookies={},
+            anime_name=page.anime_name,
         )
 
 
@@ -445,10 +502,22 @@ class Anime1Extractor:
 
         return self._extractor_for_url(url).season_episode_urls(url)
 
+    def episode_page(self, url: str, *, resolve_anime_name: bool = False) -> EpisodePage:
+        """Parse one supported episode URL into its identity, without resolving the stream."""
+
+        return self._extractor_for_url(url).episode_page(url, resolve_anime_name=resolve_anime_name)
+
+    def resolve_stream(self, page: EpisodePage) -> Episode:
+        """Complete a parsed episode page into stream URL, title, and cookies."""
+
+        return self._extractor_for_url(page.page_url).resolve_stream(page)
+
     def episode(self, url: str, *, resolve_anime_name: bool = False) -> Episode:
         """Resolve one supported episode URL into stream URL, title, and cookies."""
 
-        return self._extractor_for_url(url).episode(url, resolve_anime_name=resolve_anime_name)
+        extractor = self._extractor_for_url(url)
+        page = extractor.episode_page(url, resolve_anime_name=resolve_anime_name)
+        return extractor.resolve_stream(page)
 
     def _extractor_for_url(self, url: str) -> EpisodeExtractor:
         """Return the extractor that owns the URL's supported source kind."""

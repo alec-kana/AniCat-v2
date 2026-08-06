@@ -10,11 +10,17 @@ from typing import Protocol
 
 from .client import Anime1Client
 from .constants import DEFAULT_BLOCKED_BACKOFF, DEFAULT_MAX_BACKOFF
-from .downloader import VideoSource, download_episode, sanitize_filename
+from .downloader import (
+    VideoSource,
+    download_episode,
+    existing_download,
+    sanitize_filename,
+    skipped_result,
+)
 from .errors import AccessDeniedError, AniCatError
 from .extractor import Anime1Extractor, EpisodeSource
 from .headers import host
-from .models import DownloadProgressEvent, Episode, EpisodeJob, JobReport
+from .models import DownloadProgressEvent, EpisodeJob, JobReport
 from .options import DownloadOptions
 from .pacing import CircuitBreaker, RateLimiter, full_jitter, jittered
 from .urls import ensure_supported_url, is_episode_url, is_season_url
@@ -287,11 +293,20 @@ class AniCatService:
         """Resolve fresh episode credentials and run one full download attempt."""
 
         LOGGER.info("Resolving episode: %s", url)
-        episode = extractor.episode(url, resolve_anime_name=anime_name is None)
+        page = extractor.episode_page(url, resolve_anime_name=anime_name is None)
+        output_dir = self._episode_output_dir(page.anime_name, anime_name)
+
+        # Stop before the stream request mints credentials we would discard.
+        existing = existing_download(output_dir, page.title, overwrite=overwrite)
+        if existing is not None:
+            self.circuit_breaker.record_success(host(url))
+            return JobReport(url=url, result=skipped_result(page.unresolved_episode(), existing))
+
+        episode = extractor.resolve_stream(page)
         result = download_episode(
             client,
             episode,
-            self._episode_output_dir(episode, anime_name),
+            output_dir,
             chunk_size=self.options.safe_chunk_size,
             resume=self.options.resume,
             overwrite=overwrite,
@@ -302,10 +317,10 @@ class AniCatService:
         LOGGER.info("%s episode: %s", result.status.title(), result.episode.title)
         return JobReport(url=url, result=result)
 
-    def _episode_output_dir(self, episode: Episode, anime_name: str | None) -> Path:
-        """Return the per-anime output directory for a resolved episode."""
+    def _episode_output_dir(self, resolved_anime_name: str | None, anime_name: str | None) -> Path:
+        """Return the per-anime output directory for an episode."""
 
-        effective_anime_name = anime_name or episode.anime_name
+        effective_anime_name = anime_name or resolved_anime_name
         output_dir = self.options.output_dir
         if effective_anime_name:
             output_dir = output_dir / sanitize_filename(effective_anime_name)

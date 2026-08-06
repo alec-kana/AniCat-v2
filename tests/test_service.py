@@ -529,6 +529,52 @@ class ServiceTests(unittest.TestCase):
         self.assertIn("not found", logs.output[0])
         self.assertIn("5", logs.output[0])
 
+    def test_existing_file_is_skipped_without_resolving_a_stream(self):
+        client = DenyingClient(denials=99)
+
+        with TemporaryDirectory() as directory:
+            output_dir = Path(directory) / "Demo Anime"
+            output_dir.mkdir()
+            (output_dir / "Demo Anime [12].mp4").write_bytes(b"already downloaded")
+
+            service = AniCatService(
+                download_options(output_dir=Path(directory), chunk_size=3),
+                client_factory=lambda: client,
+            )
+
+            report = service.download_one("https://anime1.me/29592")
+
+            result = report.result
+            assert result is not None
+            self.assertEqual(result.status, "skipped")
+            self.assertEqual(result.bytes_written, len(b"already downloaded"))
+
+        # The page fetch is unavoidable (it names the file), but nothing past
+        # it should run: no API call, and no stream request to be denied.
+        self.assertEqual(client.api_calls, 0)
+        self.assertEqual(client.stream_calls, [])
+
+    def test_overwrite_still_resolves_an_existing_file(self):
+        client = DenyingClient(denials=0)
+
+        with TemporaryDirectory() as directory:
+            output_dir = Path(directory) / "Demo Anime"
+            output_dir.mkdir()
+            (output_dir / "Demo Anime [12].mp4").write_bytes(b"stale")
+
+            service = AniCatService(
+                download_options(output_dir=Path(directory), chunk_size=3, overwrite=True),
+                client_factory=lambda: client,
+            )
+
+            report = service.download_one("https://anime1.me/29592")
+
+            result = report.result
+            assert result is not None
+            self.assertEqual(result.status, "downloaded")
+
+        self.assertEqual(client.api_calls, 1)
+
     def test_expired_credentials_are_re_resolved_and_the_download_resumes(self):
         client = DenyingClient()
 

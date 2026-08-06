@@ -137,16 +137,17 @@ def _partial_path(path: Path) -> Path:
     return path.with_name(f"{path.name}.part")
 
 
-def _skipped_result(
-    episode: Episode,
-    path: Path,
-    *,
-    overwrite: bool,
-) -> DownloadResult | None:
-    """Return a skipped result when a completed file already exists."""
+def existing_download(output_dir: Path, title: str, *, overwrite: bool) -> Path | None:
+    """Return the completed output path when this episode is already downloaded."""
 
-    if overwrite or not path.exists():
+    if overwrite:
         return None
+    path = target_path(output_dir, title)
+    return path if path.exists() else None
+
+
+def skipped_result(episode: Episode, path: Path) -> DownloadResult:
+    """Build the result for an episode whose output file already exists."""
 
     existing_size = path.stat().st_size
     LOGGER.info("Skipping existing file: %s", path)
@@ -157,6 +158,19 @@ def _skipped_result(
         bytes_written=existing_size,
         total_bytes=existing_size,
     )
+
+
+def _skipped_result(
+    episode: Episode,
+    path: Path,
+    *,
+    overwrite: bool,
+) -> DownloadResult | None:
+    """Return a skipped result when a completed file already exists."""
+
+    if overwrite or not path.exists():
+        return None
+    return skipped_result(episode, path)
 
 
 def _prepare_partial_file(
