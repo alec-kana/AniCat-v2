@@ -1,6 +1,7 @@
 """AniCat core package."""
 
 import logging
+from importlib.metadata import PackageNotFoundError, version
 
 from .client import Anime1Client
 from .errors import AccessDeniedError, AniCatError, DownloadError, FetchError, ParseError
@@ -25,6 +26,10 @@ __all__ = [
     "__version__",
 ]
 
-__version__ = "0.1.0"
+try:
+    # Read from installed metadata so this can never drift from pyproject.
+    __version__ = version("anicat-v2")
+except PackageNotFoundError:
+    __version__ = "0.0.0+source"
 
 logging.getLogger(__name__).addHandler(logging.NullHandler())

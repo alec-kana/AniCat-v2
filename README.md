@@ -134,7 +134,8 @@ anicat URL [URL ...] [OPTIONS]
 |---|---|---|
 | `-o`, `--output DIR` | 指定輸出資料夾（每部動畫會依 `h1.page-title` 解析出的名稱各自建立子資料夾） | `./anime1` |
 | `-e`, `--episodes SPEC` | 只下載分類/季度 URL 中指定的集數，例如 `15-17` 或 `1,3,5-8`；直接輸入的單集 URL 不受此篩選影響。若指定的集數在該分類找不到，會印出警告訊息 | 不限制 |
-| `-c`, `--concurrency N` | 併發下載數。調高併發是最常見的 403 成因，整季批次下載建議維持 `1`~`2` | `2` |
+| `-c`, `--concurrency N` | 併發下載數。若某來源開始回 403，這是第一個該調低的參數 | `3` |
+| `--no-pacing` | 一次關掉所有節奏延遲（會覆蓋下面四個參數）。最快，但也最像機器人 | `False` |
 | `--timeout SECONDS` | HTTP 讀取逾時秒數 | `30` |
 | `--connect-timeout SECONDS` | HTTP 連線逾時秒數 | `10` |
 | `--retries N` | HTTP 與串流中斷重試次數 | `3` |
@@ -193,10 +194,10 @@ Anime1 的 CDN 會用兩種完全不同的機制回 403，AniCat-v2 會分開處
 
 2. **被反機器人保護擋下**：這時重試同一個請求沒有意義，訊息會直接寫 `blocked by anti-bot protection`。可以降低 `--concurrency`、把 `--min-delay` / `--max-delay` 調大，或稍後再試。若同一主機連續被擋，熔斷器會自動暫停所有 worker 一段時間，避免越撞越久。
 
-避免同時併發的主要機制是 `--host-interval`（所有 worker 對同一主機的最小請求間隔），每集之間的 0.5~2 秒隨機等待只是額外打散節奏，因此刻意設得很短。每個 worker 開跑前也會隨機錯開最多 2 秒。若你確定來源沒有限制、想要最快速度，把延遲關掉即可：
+避免同時併發的主要機制是 `--host-interval`（所有 worker 對同一主機的最小請求間隔），每集之間的 0.5~2 秒隨機等待只是額外打散節奏，因此刻意設得很短。每個 worker 開跑前也會隨機錯開最多 2 秒。整體額外成本大約是每集 2 秒。若你確定來源沒有限制、想要最快速度：
 
 ```bash
-anicat https://anime1.me/category/your-category-slug --min-delay 0 --max-delay 0 --stagger-start 0 --host-interval 0
+anicat https://anime1.me/category/your-category-slug --no-pacing
 ```
 
 想知道 403 到底是哪一種，加 `-v` 會印出回應狀態與 `server` / `cf-ray` 等診斷 header，以及該請求有沒有帶 Referer 和 cookie（只印 cookie 名稱，不會印簽章內容）。

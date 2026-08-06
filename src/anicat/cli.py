@@ -95,8 +95,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_CONCURRENCY,
         help=(
             f"Concurrent episode downloads. Default: {DEFAULT_CONCURRENCY}. "
-            "High concurrency with no delay is the most common cause of 403 storms; "
-            "prefer 1-2 for large season batches."
+            "Lower this first if a source starts returning 403."
         ),
     )
     parser.add_argument(
@@ -127,6 +126,14 @@ def build_parser() -> argparse.ArgumentParser:
         "pacing",
         "Randomized request pacing. Trades throughput for a request cadence that "
         "does not look automated. Set the delays to 0 to download as fast as possible.",
+    )
+    pacing_group.add_argument(
+        "--no-pacing",
+        action="store_true",
+        help=(
+            "Disable every pacing delay at once, overriding the four flags below. "
+            "Fastest, but restores the burst pattern that draws 403s."
+        ),
     )
     pacing_group.add_argument(
         "--min-delay",
@@ -337,10 +344,10 @@ def options_from_args(args: argparse.Namespace) -> DownloadOptions:
         overwrite=args.overwrite,
         progress=not args.no_progress,
         plain_progress=args.plain_progress,
-        min_delay=args.min_delay,
-        max_delay=args.max_delay,
-        stagger=args.stagger_start,
-        host_interval=args.host_interval,
+        min_delay=0.0 if args.no_pacing else args.min_delay,
+        max_delay=0.0 if args.no_pacing else args.max_delay,
+        stagger=0.0 if args.no_pacing else args.stagger_start,
+        host_interval=0.0 if args.no_pacing else args.host_interval,
         resolve_attempts=args.resolve_attempts,
         retry_budget=args.retry_budget,
         circuit_breaker_threshold=args.circuit_breaker_threshold,

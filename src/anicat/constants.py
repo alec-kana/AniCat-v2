@@ -3,8 +3,7 @@ from __future__ import annotations
 API_URL = "https://v.anime1.me/api"
 DEFAULT_OUTPUT_DIR_NAME = "anime1"
 
-# Anime1 CDNs rate-limit aggressively, so the safe default is conservative.
-DEFAULT_CONCURRENCY = 2
+DEFAULT_CONCURRENCY = 3
 DEFAULT_CONNECT_TIMEOUT = 10.0
 DEFAULT_READ_TIMEOUT = 30.0
 DEFAULT_RETRIES = 3
