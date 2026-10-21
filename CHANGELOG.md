@@ -10,6 +10,7 @@
 ### Changed
 
 - 省略必要參數時的互動提問邏輯抽成共用 helper，`anicat` 與 `anicat search` 行為一致：TTY 下提問，非互動環境直接回報 usage error 而非卡住。（移植自 upstream 0.3.0）
+- CI 改用 `actions/checkout@v7` / `actions/setup-python@v7`，脫離已棄用的 node20 runtime；新增每週執行的 Anime1 smoke workflow（與 PR gate 分開），smoke 測試涵蓋分類頁分頁爬取，並驗證動畫名稱與集數解析。（移植自 upstream 0.3.0）
 
 ### Fixed
 
