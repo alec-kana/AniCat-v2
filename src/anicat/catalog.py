@@ -3,7 +3,10 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Iterable
+from functools import cache
 from typing import Any, Protocol
+
+from opencc import OpenCC
 
 from .constants import ANIME_LIST_URL
 from .errors import ParseError
@@ -92,7 +95,27 @@ def parse_entry(row: Any) -> AnimeEntry | None:
 
 
 def search_catalog(entries: Iterable[AnimeEntry], keyword: str) -> list[AnimeEntry]:
-    """Return catalogue entries whose title contains keyword, ignoring case."""
+    """Return catalogue entries whose title contains keyword.
 
-    needle = keyword.casefold()
-    return [entry for entry in entries if needle in entry.title.casefold()]
+    Matching ignores case and Chinese script, so a Simplified keyword finds
+    the Traditional titles Anime1 lists.
+    """
+
+    needle = fold_title(keyword)
+    return [entry for entry in entries if needle in fold_title(entry.title)]
+
+
+def fold_title(text: str) -> str:
+    """Normalize text for matching: Simplified Chinese script, case-folded."""
+
+    # Folding both sides to Simplified is many-to-one, so it also absorbs
+    # Traditional variants (裏/裡, 回/迴) that a one-way Simplified-to-
+    # Traditional rewrite of the keyword would miss.
+    return _simplified_converter().convert(text).casefold()
+
+
+@cache
+def _simplified_converter() -> OpenCC:
+    """Load the Traditional-to-Simplified dictionaries once, on first search."""
+
+    return OpenCC("t2s")

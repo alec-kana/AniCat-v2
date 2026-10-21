@@ -6,6 +6,7 @@
 
 - 新增 `--keep-partial` 參數與 `ANICAT_KEEP_PARTIAL` 環境變數：保留中斷或失敗集數的 `.part` 暫存檔，供下次執行接續。
 - 新增 exit code `130`：下載被 Ctrl-C、`SIGTERM` 或 `SIGHUP` 中斷；結束前會印出刪除的暫存檔數量與釋放的空間。
+- `anicat search` 接受簡體中文關鍵字：關鍵字與標題都以 OpenCC 詞庫轉成同一字體後比對，也涵蓋「裏 / 裡」、「回 / 迴」等繁體異體字；新增純 Python 相依套件 `opencc-python-reimplemented`。
 
 ### Changed
 

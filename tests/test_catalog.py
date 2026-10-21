@@ -123,6 +123,24 @@ class SearchCatalogTests(unittest.TestCase):
     def test_search_without_match_returns_empty_list(self):
         self.assertEqual(search_catalog(self.entries, "no such anime"), [])
 
+    def test_search_accepts_a_simplified_chinese_keyword(self):
+        matches = search_catalog(self.entries, "碧蓝之海")
+
+        # The listed title keeps Anime1's own Traditional spelling.
+        self.assertEqual([entry.title for entry in matches], ["GRAND BLUE 碧藍之海 第三季"])
+
+    def test_search_folds_traditional_variants_together(self):
+        row = [1, "咒術迴戰 第三季", "連載中(01)", "2026", "冬", ""]
+        entries = parse_catalog(json.dumps([row]))
+
+        # One-way Simplified-to-Traditional gives 咒術回戰, which is not the listed 迴.
+        self.assertEqual(len(search_catalog(entries, "咒术回战")), 1)
+        self.assertEqual(len(search_catalog(entries, "咒術回戰")), 1)
+
+    def test_search_still_accepts_a_traditional_keyword_for_a_pw_title(self):
+        self.assertEqual(len(search_catalog(self.entries, "研討會")), 1)
+        self.assertEqual(len(search_catalog(self.entries, "研讨会")), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
