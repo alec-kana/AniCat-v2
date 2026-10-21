@@ -1,12 +1,15 @@
 import os
+import signal
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from anicat import AnimeEntry, __version__
+from anicat import AnimeEntry, EpisodeJob, __version__
 from anicat.cli import (
     EXIT_FAILURE,
+    EXIT_INTERRUPTED,
     EXIT_OK,
     EXIT_USAGE,
     build_parser,
@@ -14,8 +17,9 @@ from anicat.cli import (
     main,
     options_from_args,
     run_downloads,
+    termination_as_interrupt,
 )
-from anicat.constants import PLAIN_PROGRESS_ENV_VAR
+from anicat.constants import KEEP_PARTIAL_ENV_VAR, PLAIN_PROGRESS_ENV_VAR
 
 
 class CliTests(unittest.TestCase):
@@ -247,10 +251,53 @@ class CliTests(unittest.TestCase):
         ):
             self.assertEqual(main(["search", "   "]), EXIT_USAGE)
 
+    def test_keep_partial_defaults_to_false(self):
+        with patch.dict("os.environ", {}, clear=False):
+            os.environ.pop(KEEP_PARTIAL_ENV_VAR, None)
+            args = build_parser().parse_args(["https://anime1.me/1"])
+
+        self.assertFalse(options_from_args(args).keep_partial)
+
+    def test_keep_partial_flag_and_env_var_set_options(self):
+        args = build_parser().parse_args(["--keep-partial", "https://anime1.me/1"])
+        self.assertTrue(options_from_args(args).keep_partial)
+
+        with patch.dict("os.environ", {KEEP_PARTIAL_ENV_VAR: "1"}):
+            args = build_parser().parse_args(["https://anime1.me/1"])
+        self.assertTrue(options_from_args(args).keep_partial)
+
+    def test_interrupted_download_exits_130_and_reports_cleanup(self):
+        service = MagicMock()
+        service.collect_episode_urls.return_value = [EpisodeJob(url="https://anime1.me/1")]
+        service.removed_partials = [(Path("a.mp4.part"), 2048)]
+        stdout = StringIO()
+        stderr = StringIO()
+
+        with (
+            patch("anicat.cli.AniCatService", return_value=service),
+            patch("anicat.cli.run_downloads", side_effect=KeyboardInterrupt),
+            redirect_stdout(stdout),
+            redirect_stderr(stderr),
+        ):
+            self.assertEqual(main(["https://anime1.me/1"]), EXIT_INTERRUPTED)
+
+        self.assertIn("interrupted", stderr.getvalue())
+        self.assertIn("removed 1 partial file(s), freeing 2.00 KB", stdout.getvalue())
+
+    @unittest.skipUnless(hasattr(signal, "SIGTERM"), "platform has no SIGTERM")
+    def test_sigterm_is_raised_as_keyboard_interrupt_then_restored(self):
+        original = signal.getsignal(signal.SIGTERM)
+
+        with self.assertRaises(KeyboardInterrupt), termination_as_interrupt():
+            signal.raise_signal(signal.SIGTERM)
+
+        self.assertIs(signal.getsignal(signal.SIGTERM), original)
+
     def test_exit_code_constants_match_documented_values(self):
         self.assertEqual(EXIT_OK, 0)
         self.assertEqual(EXIT_FAILURE, 1)
         self.assertEqual(EXIT_USAGE, 2)
+        self.assertEqual(EXIT_INTERRUPTED, 130)
 
 
 if __name__ == "__main__":

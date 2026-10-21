@@ -5,19 +5,22 @@ import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from threading import Lock, local
+from threading import Event, Lock, local
 from typing import Protocol
 
 from .client import Anime1Client
 from .constants import DEFAULT_BLOCKED_BACKOFF, DEFAULT_MAX_BACKOFF
 from .downloader import (
     VideoSource,
+    discard_partial,
     download_episode,
     existing_download,
+    partial_path,
     sanitize_filename,
     skipped_result,
+    stale_partials,
 )
-from .errors import AccessDeniedError, AniCatError
+from .errors import AccessDeniedError, AniCatError, DownloadCancelled
 from .extractor import Anime1Extractor, EpisodeSource
 from .headers import host
 from .models import DownloadProgressEvent, EpisodeJob, JobReport
@@ -58,26 +61,43 @@ class AniCatService:
         options: DownloadOptions,
         *,
         client_factory: Callable[[], AniCatClient] | None = None,
-        sleeper: Sleeper = time.sleep,
+        sleeper: Sleeper | None = None,
         clock: Clock = time.monotonic,
     ) -> None:
         self.options = options
         self.client_factory = client_factory or self._default_client
-        self.sleeper = sleeper
+        self._cancelled = Event()
+        # Every pause (pacing, rate limiting, backoff, circuit breaker) goes
+        # through this, so cancelling wakes a sleeping worker immediately.
+        self.sleeper = sleeper or self._interruptible_sleep
         self.clock = clock
+        self._partials_lock = Lock()
+        self._touched_dirs: set[Path] = set()
+        self.removed_partials: list[tuple[Path, int]] = []
         # Shared across worker threads, not per-worker.
         self.rate_limiter = RateLimiter(
             options.host_interval,
             jitter=options.host_interval,
-            sleeper=sleeper,
+            sleeper=self.sleeper,
             clock=clock,
         )
         self.circuit_breaker = CircuitBreaker(
             options.circuit_breaker_threshold,
             options.circuit_breaker_cooldown,
-            sleeper=sleeper,
+            sleeper=self.sleeper,
             clock=clock,
         )
+
+    @property
+    def cancelled(self) -> bool:
+        """Return whether the current download run has been cancelled."""
+
+        return self._cancelled.is_set()
+
+    def cancel(self) -> None:
+        """Stop the current run: queued episodes never start, running ones stop between chunks."""
+
+        self._cancelled.set()
 
     def collect_episode_urls(
         self,
@@ -137,8 +157,18 @@ class AniCatService:
         on_progress: DownloadProgress | None = None,
         on_done: JobDone | None = None,
     ) -> list[JobReport]:
-        """Download multiple episode jobs concurrently and return job reports."""
+        """Download multiple episode jobs concurrently and return job reports.
 
+        If the caller is interrupted (Ctrl-C, a termination signal raised as
+        ``KeyboardInterrupt``, or a failing callback), the run is cancelled
+        and this waits for every worker to close its stream and ``.part``
+        file before re-raising, so no thread keeps writing in the background.
+        """
+
+        self._cancelled.clear()
+        with self._partials_lock:
+            self._touched_dirs.clear()
+            self.removed_partials.clear()
         LOGGER.info(
             "Downloading %d episode(s) with %d worker(s)",
             len(episode_jobs),
@@ -163,7 +193,10 @@ class AniCatService:
         def download_with_worker_client(job: EpisodeJob) -> JobReport:
             """Download one job using the session owned by the current worker thread."""
 
-            self._pace_worker(worker_state)
+            try:
+                self._pace_worker(worker_state)
+            except DownloadCancelled as error:
+                return JobReport(url=job.url, error=str(error))
             return self._download_one_with_client(
                 worker_client(),
                 job.url,
@@ -171,21 +204,32 @@ class AniCatService:
                 on_progress=on_progress,
             )
 
+        # Managed by hand: the context manager's exit waits for every queued
+        # job, so an interrupted batch would keep downloading to the end.
+        executor = ThreadPoolExecutor(max_workers=self.options.worker_count)
         try:
-            with ThreadPoolExecutor(max_workers=self.options.worker_count) as executor:
-                # Each worker owns one reusable HTTP session across its assigned jobs.
-                futures = {
-                    executor.submit(download_with_worker_client, job): job for job in episode_jobs
-                }
+            # Each worker owns one reusable HTTP session across its assigned jobs.
+            futures = {
+                executor.submit(download_with_worker_client, job): job for job in episode_jobs
+            }
 
-                for future in as_completed(futures):
-                    report = future.result()
-                    reports.append(report)
-                    if on_done:
-                        on_done(report)
+            for future in as_completed(futures):
+                report = future.result()
+                reports.append(report)
+                if on_done:
+                    on_done(report)
+        except BaseException:
+            LOGGER.warning("Interrupted; stopping active downloads")
+            self.cancel()
+            shutdown_until_idle(executor)
+            raise
+        else:
+            executor.shutdown(wait=True)
         finally:
             for client in worker_clients:
                 close_client(client)
+            if not self.options.keep_partial:
+                self._sweep_partials()
 
         return reports
 
@@ -231,6 +275,40 @@ class AniCatService:
         anime_name: str | None = None,
         on_progress: DownloadProgress | None = None,
     ) -> JobReport:
+        """Resolve and download one episode URL, removing its .part file if it does not finish."""
+
+        # Filled once the episode's output path is known.
+        partials: set[Path] = set()
+        report: JobReport | None = None
+        try:
+            report = self._download_with_recovery(
+                client,
+                url,
+                anime_name=anime_name,
+                on_progress=on_progress,
+                partials=partials,
+            )
+            return report
+        except DownloadCancelled as error:
+            LOGGER.info("Episode cancelled: %s", url)
+            report = JobReport(url=url, error=str(error))
+            return report
+        finally:
+            # Also runs when an unexpected exception escapes, so a crash
+            # never strands a half-written file.
+            if not self.options.keep_partial and (report is None or report.error):
+                for part in partials:
+                    self._remove_partial(part)
+
+    def _download_with_recovery(
+        self,
+        client: AniCatClient,
+        url: str,
+        *,
+        anime_name: str | None,
+        on_progress: DownloadProgress | None,
+        partials: set[Path],
+    ) -> JobReport:
         """Resolve and download one episode URL, re-resolving on denied access.
 
         Each attempt mints fresh credentials and re-enters the download, which
@@ -244,8 +322,8 @@ class AniCatService:
         attempts = self.options.resolve_attempts
 
         for attempt in range(attempts):
-            self.circuit_breaker.wait(target_host)
             try:
+                self.circuit_breaker.wait(target_host)
                 return self._resolve_and_download(
                     client,
                     extractor,
@@ -253,6 +331,7 @@ class AniCatService:
                     anime_name=anime_name,
                     on_progress=on_progress,
                     overwrite=overwrite,
+                    partials=partials,
                 )
             except AccessDeniedError as error:
                 self.circuit_breaker.record_block(target_host)
@@ -271,6 +350,8 @@ class AniCatService:
                     attempts,
                 )
                 self.sleeper(delay)
+            except DownloadCancelled:
+                raise
             except AniCatError as error:
                 LOGGER.warning("Episode failed with recoverable error: %s", error)
                 return JobReport(url=url, error=str(error))
@@ -289,12 +370,17 @@ class AniCatService:
         anime_name: str | None,
         on_progress: DownloadProgress | None,
         overwrite: bool,
+        partials: set[Path],
     ) -> JobReport:
         """Resolve fresh episode credentials and run one full download attempt."""
 
+        self._raise_if_cancelled()
         LOGGER.info("Resolving episode: %s", url)
         page = extractor.episode_page(url, resolve_anime_name=anime_name is None)
         output_dir = self._episode_output_dir(page.anime_name, anime_name)
+        partials.add(partial_path(output_dir, page.title))
+        with self._partials_lock:
+            self._touched_dirs.add(output_dir)
 
         # Stop before the stream request mints credentials we would discard.
         existing = existing_download(output_dir, page.title, overwrite=overwrite)
@@ -302,6 +388,7 @@ class AniCatService:
             self.circuit_breaker.record_success(host(url))
             return JobReport(url=url, result=skipped_result(page.unresolved_episode(), existing))
 
+        self._raise_if_cancelled()
         episode = extractor.resolve_stream(page)
         result = download_episode(
             client,
@@ -312,6 +399,7 @@ class AniCatService:
             overwrite=overwrite,
             progress=on_progress,
             stream_retries=self.options.retries,
+            should_stop=self._cancelled.is_set,
         )
         self.circuit_breaker.record_success(host(url))
         LOGGER.info("%s episode: %s", result.status.title(), result.episode.title)
@@ -335,6 +423,39 @@ class AniCatService:
             return error.retry_after
         base = DEFAULT_BLOCKED_BACKOFF if error.bot_mitigation else self.options.min_delay
         return full_jitter(base, attempt, cap=DEFAULT_MAX_BACKOFF)
+
+    def _interruptible_sleep(self, seconds: float) -> None:
+        """Sleep, but wake and abort the episode as soon as the run is cancelled."""
+
+        if self._cancelled.wait(seconds):
+            raise DownloadCancelled("download run cancelled")
+
+    def _raise_if_cancelled(self) -> None:
+        """Abort before starting more network work for a cancelled run."""
+
+        if self._cancelled.is_set():
+            raise DownloadCancelled("download run cancelled")
+
+    def _remove_partial(self, part: Path) -> None:
+        """Delete one .part file and remember it for the run summary."""
+
+        try:
+            freed = discard_partial(part)
+        except OSError as error:
+            LOGGER.warning("Could not remove partial file %s: %s", part, error)
+            return
+        if freed is not None:
+            with self._partials_lock:
+                self.removed_partials.append((part, freed))
+
+    def _sweep_partials(self) -> None:
+        """Remove .part files left in this run's folders, e.g. by an earlier killed run."""
+
+        with self._partials_lock:
+            directories = sorted(self._touched_dirs)
+        for directory in directories:
+            for part in stale_partials(directory):
+                self._remove_partial(part)
 
     def _default_client(self) -> AniCatClient:
         """Create the default HTTP client for one worker."""
@@ -366,6 +487,21 @@ def dedupe_jobs(jobs: list[EpisodeJob]) -> list[EpisodeJob]:
         seen.add(job.url)
         result.append(job)
     return result
+
+
+def shutdown_until_idle(executor: ThreadPoolExecutor) -> None:
+    """Drop queued jobs and wait for running ones to stop, even through repeated Ctrl-C.
+
+    Returning early would leave worker threads writing in the background; on
+    hosts like a-Shell they live inside the app, holding deleted files' space.
+    """
+
+    while True:
+        try:
+            executor.shutdown(wait=True, cancel_futures=True)
+            return
+        except KeyboardInterrupt:
+            LOGGER.warning("Still closing active downloads; please wait")
 
 
 def close_client(client: object) -> None:

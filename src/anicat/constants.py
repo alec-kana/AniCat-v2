@@ -15,6 +15,7 @@ DEFAULT_MAX_FILENAME_STEM_LENGTH = 180
 
 PROGRESS_TITLE_MAX_LENGTH = 42
 PLAIN_PROGRESS_ENV_VAR = "ANICAT_PLAIN_PROGRESS"
+KEEP_PARTIAL_ENV_VAR = "ANICAT_KEEP_PARTIAL"
 
 # Pacing. The host interval is what prevents simultaneous requests; the
 # per-episode delays only break up cadence, so they stay short.

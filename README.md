@@ -15,7 +15,7 @@ AniCat-v2 是一個專注於 Anime1 下載體驗的 CLI 工具。它可以把單
 
 - **Rich 多任務進度列**：顯示整體下載量、速度、完成集數，以及目前下載中的單檔進度。
 
-- **預設支援續傳**：預設沿用 `.mp4.part` 暫存檔接續下載。
+- **續傳與不殘留暫存檔**：同一次執行中，串流中斷或憑證過期都會從 `.mp4.part` 暫存檔接續。下載中斷（Ctrl-C、終止訊號）或失敗時，預設會停止所有下載、關閉檔案並刪除該集的 `.part`，不會留下佔用空間的暫存檔；需要跨次續傳時再加 `--keep-partial`。
 
 - **重跑整季很便宜**：已下載完成的集數只會做一次頁面請求（用來得知檔名）就跳過，不會再去索取用不到的串流憑證。每週追新番時重跑同一個分類 URL 幾乎不會有額外等待。
 
@@ -174,6 +174,7 @@ anicat search KEYWORD
 | `--circuit-breaker-cooldown SECONDS` | 熔斷後的暫停時間 | `60` |
 | `--overwrite` | 覆寫已完成的同名檔案 | `False` |
 | `--no-resume` | 不沿用既有 `.part` 暫存檔 | `False` |
+| `--keep-partial` | 保留中斷或失敗集數的 `.part` 暫存檔，下次執行可接續。預設會刪除，並一併清掉本次下載資料夾內先前遺留的 `.part`。也可設定環境變數 `ANICAT_KEEP_PARTIAL=1` | `False` |
 | `--no-progress` | 關閉進度列 | `False` |
 | `--plain-progress` | 強制使用逐行純文字進度，取代 Rich 進度列（見下方 a-shell 說明） | `False` |
 | `-v`, `--verbose` | 顯示診斷 log；`-vv` 顯示 HTTP retry/debug 細節 | `False` |
@@ -246,6 +247,19 @@ anicat https://anime1.me/category/your-category-slug --no-pacing
 
 想知道 403 到底是哪一種，加 `-v` 會印出回應狀態與 `server` / `cf-ray` 等診斷 header，以及該請求有沒有帶 Referer 和 cookie（只印 cookie 名稱，不會印簽章內容）。
 
+### 中斷下載與儲存空間
+
+按下 Ctrl-C，或程式收到 `SIGTERM` / `SIGHUP` 時，AniCat-v2 會：
+
+1. 不再開始任何排隊中的集數；
+2. 讓正在下載的集數在下一個資料區塊後停止，關閉網路串流與 `.part` 檔案；
+3. 等所有下載執行緒都結束後才把控制權交回終端機（再按一次 Ctrl-C 也會繼續等待收尾），並以 exit code `130` 結束；
+4. 刪除未完成集數的 `.part`，最後印出刪除了幾個暫存檔、釋放多少空間。
+
+這點在 a-shell 這類「Python 跑在 App 程序裡」的環境特別重要：以前中斷後，背景執行緒可能繼續寫入並一直開著檔案，即使在「檔案」App 刪掉影片，空間也要等 a-shell 完全關閉才會釋放。
+
+若程式被強制結束（例如系統直接終止 App），來不及收尾的 `.part` 會在下次下載到同一個動畫資料夾時自動清掉。想保留暫存檔、下次接續大檔案時，請加 `--keep-partial`。
+
 ## 進階說明
 
 ### Python API
@@ -284,6 +298,7 @@ for entry in matches:
 | `0` | 全部下載成功，或目標檔案已存在而略過 |
 | `1` | 至少一個 URL 失敗、沒有找到任何集數，或搜尋沒有相符項目 |
 | `2` | CLI 使用方式或參數錯誤，例如沒有輸入 URL |
+| `130` | 下載被中斷（Ctrl-C、`SIGTERM` 或 `SIGHUP`），未完成的下載已停止並清除暫存檔 |
 
 ## 貢獻
 

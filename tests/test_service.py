@@ -1,3 +1,5 @@
+import threading
+import time
 import unittest
 from collections.abc import Iterator, Mapping
 from pathlib import Path
@@ -6,8 +8,8 @@ from typing import Any, ClassVar, NoReturn, cast
 
 import requests
 
-from anicat.errors import AccessDeniedError
-from anicat.models import EpisodeJob, VideoStreamResponse
+from anicat.errors import AccessDeniedError, DownloadCancelled
+from anicat.models import DownloadProgressEvent, EpisodeJob, JobReport, VideoStreamResponse
 from anicat.options import DownloadOptions
 from anicat.service import AniCatService
 
@@ -739,6 +741,192 @@ class ServiceTests(unittest.TestCase):
         )
 
         self.assertEqual(jobs, [EpisodeJob(url="https://anime1.me/1")])
+
+
+class PartialCleanupTests(unittest.TestCase):
+    def test_failed_episode_removes_its_partial_file_by_default(self):
+        client = DenyingClient(denials=99)
+
+        with TemporaryDirectory() as directory:
+            service = AniCatService(
+                download_options(output_dir=Path(directory), chunk_size=3, resolve_attempts=2),
+                client_factory=lambda: client,
+            )
+
+            report = service.download_one("https://anime1.me/29592")
+
+            self.assertIsNotNone(report.error)
+            self.assertEqual(list(Path(directory).rglob("*.part")), [])
+            self.assertEqual(len(service.removed_partials), 1)
+
+    def test_keep_partial_leaves_a_failed_episode_resumable(self):
+        client = DenyingClient(denials=99)
+
+        with TemporaryDirectory() as directory:
+            service = AniCatService(
+                download_options(
+                    output_dir=Path(directory),
+                    chunk_size=3,
+                    resolve_attempts=2,
+                    keep_partial=True,
+                ),
+                client_factory=lambda: client,
+            )
+
+            service.download_one("https://anime1.me/29592")
+
+            parts = list(Path(directory).rglob("*.part"))
+            self.assertEqual([part.read_bytes() for part in parts], [b"abc"])
+            self.assertEqual(service.removed_partials, [])
+
+    def test_batch_sweeps_leftover_partials_from_an_earlier_run(self):
+        with TemporaryDirectory() as directory:
+            anime_dir = Path(directory) / "Demo"
+            anime_dir.mkdir()
+            leftover = anime_dir / "Killed Earlier.mp4.part"
+            leftover.write_bytes(b"x" * 10)
+            service = AniCatService(
+                download_options(output_dir=Path(directory), chunk_size=1024),
+                client_factory=GoodClient,
+            )
+
+            reports = service.download_many([EpisodeJob(url="https://anime1.me/1")])
+
+            self.assertIsNotNone(reports[0].result)
+            self.assertFalse(leftover.exists())
+            self.assertTrue((anime_dir / "Demo.mp4").exists())
+            self.assertEqual(service.removed_partials, [(leftover, 10)])
+
+    def test_keep_partial_skips_the_leftover_sweep(self):
+        with TemporaryDirectory() as directory:
+            anime_dir = Path(directory) / "Demo"
+            anime_dir.mkdir()
+            leftover = anime_dir / "Killed Earlier.mp4.part"
+            leftover.write_bytes(b"x")
+            service = AniCatService(
+                download_options(output_dir=Path(directory), chunk_size=1024, keep_partial=True),
+                client_factory=GoodClient,
+            )
+
+            service.download_many([EpisodeJob(url="https://anime1.me/1")])
+
+            self.assertTrue(leftover.exists())
+
+    def test_cancel_wakes_a_sleeping_worker(self):
+        service = AniCatService(download_options(output_dir=Path("unused")))
+        service.cancel()
+
+        started = time.monotonic()
+        with self.assertRaises(DownloadCancelled):
+            service.sleeper(30.0)
+
+        self.assertLess(time.monotonic() - started, 1.0)
+
+    def test_interrupted_batch_stops_workers_and_leaves_no_partial_files(self):
+        EndlessClient.opened.clear()
+        both_streaming = threading.Event()
+        streaming: set[str] = set()
+        lock = threading.Lock()
+
+        def on_progress(event: DownloadProgressEvent) -> None:
+            with lock:
+                if "Endless" in event.episode.title:
+                    streaming.add(event.episode.title)
+                if len(streaming) == 2:
+                    both_streaming.set()
+
+        def on_done(report: JobReport) -> None:
+            # Runs on the calling thread, exactly where Ctrl-C lands in the CLI.
+            self.assertTrue(both_streaming.wait(10))
+            raise KeyboardInterrupt
+
+        with TemporaryDirectory() as directory:
+            service = AniCatService(
+                download_options(
+                    output_dir=Path(directory),
+                    concurrency=3,
+                    chunk_size=4,
+                    # The worker that finishes the quick episode then waits
+                    # here, which the cancellation has to cut short.
+                    min_delay=30.0,
+                    max_delay=30.0,
+                ),
+                client_factory=EndlessClient,
+            )
+            jobs = [
+                EpisodeJob(url="https://anime1.me/quick"),
+                *(EpisodeJob(url=f"https://anime1.me/{number}") for number in range(1, 5)),
+            ]
+
+            started = time.monotonic()
+            with self.assertRaises(KeyboardInterrupt):
+                service.download_many(jobs, on_progress=on_progress, on_done=on_done)
+            elapsed = time.monotonic() - started
+
+            leftovers = list(Path(directory).rglob("*.part"))
+            removed = len(service.removed_partials)
+
+        # Queued episodes never started, and both running streams were closed
+        # before download_many returned control, well before they would end.
+        self.assertLess(elapsed, 5.0)
+        self.assertEqual(len(EndlessClient.opened), 2)
+        self.assertTrue(all(response.closed for response in EndlessClient.opened))
+        self.assertEqual(leftovers, [])
+        self.assertEqual(removed, 2)
+        self.assertTrue(service.cancelled)
+
+
+class EndlessResponse:
+    """A stream that never ends on its own, like a large file on a slow link."""
+
+    status_code = 200
+
+    def __init__(self) -> None:
+        self.headers: dict[str, str] = {}
+        self.closed = False
+
+    def iter_content(self, chunk_size: int) -> Iterator[bytes]:
+        # Bounded so a regression fails the test instead of hanging it.
+        for _ in range(5000):
+            time.sleep(0.002)
+            yield b"x" * chunk_size
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class EndlessClient:
+    opened: ClassVar[list[EndlessResponse]] = []
+
+    def post_page(self, url: str) -> str:
+        number = url.rstrip("/").rsplit("/", 1)[-1]
+        return f"""
+        <h2 class="entry-title">Endless [{number}]</h2>
+        <video class="video-js" data-apireq="%7B%7D"></video>
+        """
+
+    def get_page(self, url: str) -> str:
+        return self.post_page(url)
+
+    def post_api(self, data_apireq: str, *, page_url: str | None = None) -> requests.Response:
+        return cast(requests.Response, ApiResponse())
+
+    def stream_video(
+        self,
+        url: str,
+        *,
+        cookies: Mapping[str, str],
+        headers: Mapping[str, str] | None = None,
+        page_url: str | None = None,
+    ) -> VideoStreamResponse:
+        if page_url is not None and page_url.endswith("/quick"):
+            return VideoResponse()
+        response = EndlessResponse()
+        self.opened.append(response)
+        return response
+
+    def close(self) -> None:
+        pass
 
 
 if __name__ == "__main__":

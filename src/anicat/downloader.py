@@ -10,9 +10,12 @@ from typing import Literal, Protocol
 import requests
 
 from .constants import DEFAULT_CHUNK_SIZE, DEFAULT_MAX_FILENAME_STEM_LENGTH
-from .errors import AccessDeniedError, DownloadError, FetchError
+from .errors import AccessDeniedError, DownloadCancelled, DownloadError, FetchError
 from .headers import header_value
 from .models import DownloadProgressEvent, DownloadResult, Episode, VideoStreamResponse
+
+PARTIAL_SUFFIX = ".part"
+PARTIAL_GLOB = f"*.mp4{PARTIAL_SUFFIX}"
 
 INVALID_FILENAME_PATTERN = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 WINDOWS_RESERVED_NAMES = {
@@ -26,6 +29,7 @@ WINDOWS_RESERVED_NAMES = {
 }
 
 ProgressCallback = Callable[[DownloadProgressEvent], None]
+StopCheck = Callable[[], bool]
 WriteMode = Literal["ab", "wb"]
 LOGGER = logging.getLogger(__name__)
 CONTENT_RANGE_PATTERN = re.compile(r"^bytes (?P<start>\d+)-(?P<end>\d+)/(?P<total>\d+|\*)$")
@@ -106,8 +110,13 @@ def download_episode(
     overwrite: bool = False,
     progress: ProgressCallback | None = None,
     stream_retries: int = 3,
+    should_stop: StopCheck | None = None,
 ) -> DownloadResult:
-    """Download one episode with atomic writes, resume support, and validation."""
+    """Download one episode with atomic writes, resume support, and validation.
+
+    ``should_stop`` is polled between chunks; once it returns True the stream
+    and the ``.part`` file are closed and :class:`DownloadCancelled` is raised.
+    """
 
     output_dir.mkdir(parents=True, exist_ok=True)
     path = target_path(output_dir, episode.title)
@@ -126,6 +135,7 @@ def download_episode(
         chunk_size=chunk_size,
         progress=progress,
         stream_retries=stream_retries,
+        should_stop=should_stop,
     )
     part_path.replace(path)
     return _downloaded_result(episode, path, written, total_bytes)
@@ -134,7 +144,33 @@ def download_episode(
 def _partial_path(path: Path) -> Path:
     """Return the temporary .part path for a final video path."""
 
-    return path.with_name(f"{path.name}.part")
+    return path.with_name(f"{path.name}{PARTIAL_SUFFIX}")
+
+
+def partial_path(output_dir: Path, title: str) -> Path:
+    """Return the .part path an episode title downloads into."""
+
+    return _partial_path(target_path(output_dir, title))
+
+
+def discard_partial(part_path: Path) -> int | None:
+    """Delete a .part file and return the bytes freed, or None when there was none."""
+
+    try:
+        size = part_path.stat().st_size
+        part_path.unlink()
+    except FileNotFoundError:
+        return None
+    LOGGER.info("Removed partial file: %s", part_path)
+    return size
+
+
+def stale_partials(directory: Path) -> list[Path]:
+    """Return the episode .part files left in a directory."""
+
+    if not directory.is_dir():
+        return []
+    return sorted(path for path in directory.glob(PARTIAL_GLOB) if path.is_file())
 
 
 def existing_download(output_dir: Path, title: str, *, overwrite: bool) -> Path | None:
@@ -225,6 +261,7 @@ def _download_stream(
     chunk_size: int,
     progress: ProgressCallback | None,
     stream_retries: int,
+    should_stop: StopCheck | None = None,
 ) -> tuple[int, int | None]:
     """Download the response body, reopening the stream with Range after interruptions."""
 
@@ -242,6 +279,7 @@ def _download_stream(
                 chunk_size=chunk_size,
                 progress=progress,
                 state=state,
+                should_stop=should_stop,
             )
         except (DownloadError, FetchError, requests.RequestException) as error:
             # Stale credentials are not a transport hiccup; only the caller can
@@ -271,9 +309,11 @@ def _download_stream_attempt(
     chunk_size: int,
     progress: ProgressCallback | None,
     state: StreamState,
+    should_stop: StopCheck | None = None,
 ) -> tuple[int, int | None]:
     """Run one stream attempt and return written bytes with expected total size."""
 
+    _raise_if_stopped(should_stop, episode)
     response = _open_video_stream(client, episode, resume_from, state.validator)
 
     try:
@@ -309,11 +349,19 @@ def _download_stream_attempt(
             resume_from=normalized_resume_from,
             total_bytes=total_bytes,
             progress=progress,
+            should_stop=should_stop,
         )
         _ensure_complete(episode, written, total_bytes)
         return written, total_bytes
     finally:
         response.close()
+
+
+def _raise_if_stopped(should_stop: StopCheck | None, episode: Episode) -> None:
+    """Abort the download when the run has been cancelled."""
+
+    if should_stop is not None and should_stop():
+        raise DownloadCancelled(f"download cancelled: {episode.title}")
 
 
 def _current_partial_size(part_path: Path) -> int:
@@ -431,6 +479,7 @@ def _write_response_body(
     resume_from: int,
     total_bytes: int | None,
     progress: ProgressCallback | None,
+    should_stop: StopCheck | None = None,
 ) -> int:
     """Write a streaming response body to the .part file and emit progress."""
 
@@ -447,6 +496,9 @@ def _write_response_body(
     with part_path.open(mode) as file:
         LOGGER.debug("Writing response body to %s with mode=%s", part_path, mode)
         for chunk in response.iter_content(chunk_size=chunk_size):
+            # Leaving through the with block closes the handle, so an
+            # interrupted run never keeps a deleted file's space reserved.
+            _raise_if_stopped(should_stop, episode)
             if not chunk:
                 continue
             file.write(chunk)

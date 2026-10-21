@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import argparse
 import os
+import signal
 import sys
 import time
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from pathlib import Path
+from types import FrameType
+from typing import Any
 
 from rich import box
 from rich.console import Console
@@ -29,6 +33,7 @@ from .constants import (
     DEFAULT_RETRIES,
     DEFAULT_RETRY_BUDGET,
     DEFAULT_STAGGER,
+    KEEP_PARTIAL_ENV_VAR,
     PLAIN_PROGRESS_ENV_VAR,
 )
 from .errors import AniCatError
@@ -47,7 +52,10 @@ from .urls import parse_episode_selector, split_urls
 EXIT_OK = 0
 EXIT_FAILURE = 1
 EXIT_USAGE = 2
+EXIT_INTERRUPTED = 130
 SEARCH_COMMAND = "search"
+# Handled like Ctrl-C so the run stops cleanly instead of dying mid-write.
+TERMINATION_SIGNALS = ("SIGTERM", "SIGHUP")
 
 _TRUTHY_ENV_VALUES = frozenset({"1", "true", "yes", "on"})
 
@@ -72,7 +80,8 @@ def build_parser() -> argparse.ArgumentParser:
             "Exit codes:\n"
             "  0  All downloads completed or were skipped\n"
             "  1  At least one URL failed, no episode was found, or nothing matched\n"
-            "  2  Invalid CLI usage or options"
+            "  2  Invalid CLI usage or options\n"
+            "  130  Interrupted (Ctrl-C, SIGTERM or SIGHUP); unfinished downloads were stopped"
         ),
     )
     parser.add_argument(
@@ -230,6 +239,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Replace existing completed files.",
     )
     parser.add_argument(
+        "--keep-partial",
+        action="store_true",
+        default=env_flag(KEEP_PARTIAL_ENV_VAR),
+        help=(
+            "Keep .part files of interrupted or failed episodes so a later run can resume "
+            "them. By default they are deleted, along with any leftover .part files in the "
+            "folders this run downloads into, so nothing keeps using storage. Defaults to on "
+            f"if the {KEEP_PARTIAL_ENV_VAR} environment variable is set to a truthy value."
+        ),
+    )
+    parser.add_argument(
         "--no-progress",
         action="store_true",
         help="Disable progress bar.",
@@ -332,6 +352,24 @@ def main(argv: Sequence[str] | None = None) -> int:
     service = AniCatService(options)
 
     try:
+        with termination_as_interrupt():
+            return download_and_report(service, options, input_urls, episodes)
+    except KeyboardInterrupt:
+        # download_many has already stopped every worker and closed its files.
+        print("- interrupted; unfinished downloads were stopped.", file=sys.stderr)
+        print_removed_partials(service)
+        return EXIT_INTERRUPTED
+
+
+def download_and_report(
+    service: AniCatService,
+    options: DownloadOptions,
+    input_urls: list[str],
+    episodes: frozenset[int] | None,
+) -> int:
+    """Collect episodes, download them, and print the per-episode summary."""
+
+    try:
         episode_jobs = service.collect_episode_urls(input_urls, episodes=episodes)
     except AniCatError as error:
         print(f"- {error}", file=sys.stderr)
@@ -363,7 +401,45 @@ def main(argv: Sequence[str] | None = None) -> int:
         f"+ done in {elapsed:.2f}s: "
         f"{len(downloaded)} downloaded, {len(skipped)} skipped, {len(failed)} failed"
     )
+    print_removed_partials(service)
     return EXIT_FAILURE if failed else EXIT_OK
+
+
+def print_removed_partials(service: AniCatService) -> None:
+    """Report how much storage the run's partial-file cleanup released."""
+
+    removed = service.removed_partials
+    if not removed:
+        return
+    freed = sum(size for _path, size in removed)
+    print(f"= removed {len(removed)} partial file(s), freeing {format_size(freed)}")
+
+
+@contextmanager
+def termination_as_interrupt() -> Iterator[None]:
+    """Raise KeyboardInterrupt on SIGTERM/SIGHUP so they get the Ctrl-C cleanup.
+
+    Their default action kills the process mid-write, skipping it entirely.
+    """
+
+    def interrupt(signum: int, frame: FrameType | None) -> None:
+        raise KeyboardInterrupt
+
+    previous: dict[int, Any] = {}
+    for name in TERMINATION_SIGNALS:
+        signum = getattr(signal, name, None)
+        if signum is None:
+            continue
+        try:
+            previous[signum] = signal.signal(signum, interrupt)
+        except (OSError, ValueError):
+            # Not the main thread, or the host does not allow the signal.
+            continue
+    try:
+        yield
+    finally:
+        for signum, handler in previous.items():
+            signal.signal(signum, handler)
 
 
 def prompt_for(label: str) -> str:
@@ -451,6 +527,7 @@ def options_from_args(args: argparse.Namespace) -> DownloadOptions:
         chunk_size=args.chunk_size,
         resume=not args.no_resume,
         overwrite=args.overwrite,
+        keep_partial=args.keep_partial,
         progress=not args.no_progress,
         plain_progress=args.plain_progress,
         min_delay=0.0 if args.no_pacing else args.min_delay,

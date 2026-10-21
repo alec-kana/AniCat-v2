@@ -5,8 +5,14 @@ from tempfile import TemporaryDirectory
 
 import requests
 
-from anicat.downloader import download_episode, sanitize_filename
-from anicat.errors import AccessDeniedError, DownloadError, FetchError
+from anicat.downloader import (
+    discard_partial,
+    download_episode,
+    partial_path,
+    sanitize_filename,
+    stale_partials,
+)
+from anicat.errors import AccessDeniedError, DownloadCancelled, DownloadError, FetchError
 from anicat.models import Episode
 
 
@@ -390,6 +396,68 @@ class DownloaderTests(unittest.TestCase):
                 download_episode(client, episode, Path(directory), chunk_size=2)
 
             self.assertEqual((Path(directory) / "Demo.mp4.part").read_bytes(), b"abc")
+
+    def test_stop_request_ends_the_stream_between_chunks_without_retrying(self):
+        response = FakeResponse(b"abcdef", headers={"content-length": "6"})
+        client = FakeClient(response)
+        episode = Episode(
+            page_url="https://anime1.me/1",
+            title="Demo",
+            stream_url="https://cdn.example/demo.mp4",
+            cookies={},
+        )
+        checks = iter([False, False, True])
+
+        with TemporaryDirectory() as directory:
+            with self.assertRaises(DownloadCancelled):
+                download_episode(
+                    client,
+                    episode,
+                    Path(directory),
+                    chunk_size=2,
+                    stream_retries=5,
+                    should_stop=lambda: next(checks),
+                )
+
+            # Only the chunk written before the stop request landed.
+            self.assertEqual((Path(directory) / "Demo.mp4.part").read_bytes(), b"ab")
+
+        self.assertEqual(len(client.calls), 1)
+        self.assertTrue(response.closed)
+
+    def test_stop_request_before_the_stream_opens_makes_no_request(self):
+        client = FakeClient(FakeResponse(b"unused"))
+        episode = Episode(
+            page_url="https://anime1.me/1",
+            title="Demo",
+            stream_url="https://cdn.example/demo.mp4",
+            cookies={},
+        )
+
+        with TemporaryDirectory() as directory:
+            with self.assertRaises(DownloadCancelled):
+                download_episode(client, episode, Path(directory), should_stop=lambda: True)
+
+        self.assertEqual(client.calls, [])
+
+    def test_discard_partial_reports_freed_bytes_once(self):
+        with TemporaryDirectory() as directory:
+            part = partial_path(Path(directory), "Demo")
+            part.write_bytes(b"abcd")
+
+            self.assertEqual(discard_partial(part), 4)
+            self.assertFalse(part.exists())
+            self.assertIsNone(discard_partial(part))
+
+    def test_stale_partials_lists_only_episode_part_files(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "A.mp4.part").write_bytes(b"a")
+            (root / "B.mp4").write_bytes(b"b")
+            (root / "notes.part").write_bytes(b"c")
+
+            self.assertEqual(stale_partials(root), [root / "A.mp4.part"])
+            self.assertEqual(stale_partials(root / "missing"), [])
 
 
 if __name__ == "__main__":

@@ -32,6 +32,8 @@ class DownloadOptions:
     chunk_size: int = DEFAULT_CHUNK_SIZE
     resume: bool = True
     overwrite: bool = False
+    # Without this, an episode that does not finish leaves no .part file behind.
+    keep_partial: bool = False
     progress: bool = True
     plain_progress: bool = False
     min_delay: float = DEFAULT_MIN_DELAY
