@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- `anime1.me` 的 `?cat=N` 分類 URL 先前被判定為不支援，但那正是 Anime1 目錄索引使用的連結形式；現已與 `anime1.pw` 的判斷邏輯一致（移植自 upstream 0.3.0）。
+
 ## 0.3.0 - 2026-08-06
 
 ### Added
