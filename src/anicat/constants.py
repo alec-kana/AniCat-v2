@@ -16,6 +16,10 @@ DEFAULT_MAX_FILENAME_STEM_LENGTH = 180
 PROGRESS_TITLE_MAX_LENGTH = 42
 PLAIN_PROGRESS_ENV_VAR = "ANICAT_PLAIN_PROGRESS"
 KEEP_PARTIAL_ENV_VAR = "ANICAT_KEEP_PARTIAL"
+# A .part file in a folder the current run did not use is only swept once it has
+# been untouched this long: well past the retry budget, so a file another run is
+# still recovering is never deleted from under it.
+STALE_PARTIAL_AGE = 30 * 60.0
 
 # Pacing. The host interval is what prevents simultaneous requests; the
 # per-episode delays only break up cadence, so they stay short.

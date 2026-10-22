@@ -1,3 +1,4 @@
+import os
 import unittest
 from collections.abc import Iterator, Mapping
 from pathlib import Path
@@ -8,6 +9,7 @@ import requests
 from anicat.downloader import (
     discard_partial,
     download_episode,
+    partial_folders,
     partial_path,
     sanitize_filename,
     stale_partials,
@@ -458,6 +460,26 @@ class DownloaderTests(unittest.TestCase):
 
             self.assertEqual(stale_partials(root), [root / "A.mp4.part"])
             self.assertEqual(stale_partials(root / "missing"), [])
+
+    def test_stale_partials_can_skip_recently_written_files(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            old = root / "Old.mp4.part"
+            old.write_bytes(b"a")
+            os.utime(old, (1000, 1000))
+            (root / "Live.mp4.part").write_bytes(b"b")
+
+            self.assertEqual(stale_partials(root, modified_before=2000), [old])
+
+    def test_partial_folders_lists_output_folder_and_anime_subfolders(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "B Show").mkdir()
+            (root / "A Show").mkdir()
+            (root / "Loose.mp4").write_bytes(b"x")
+
+            self.assertEqual(partial_folders(root), [root, root / "A Show", root / "B Show"])
+            self.assertEqual(partial_folders(root / "missing"), [])
 
 
 if __name__ == "__main__":

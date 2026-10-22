@@ -165,12 +165,30 @@ def discard_partial(part_path: Path) -> int | None:
     return size
 
 
-def stale_partials(directory: Path) -> list[Path]:
-    """Return the episode .part files left in a directory."""
+def stale_partials(directory: Path, *, modified_before: float | None = None) -> list[Path]:
+    """Return the episode .part files left in a directory, optionally only untouched ones."""
 
     if not directory.is_dir():
         return []
-    return sorted(path for path in directory.glob(PARTIAL_GLOB) if path.is_file())
+    found: list[Path] = []
+    for path in sorted(directory.glob(PARTIAL_GLOB)):
+        try:
+            if not path.is_file():
+                continue
+            if modified_before is not None and path.stat().st_mtime >= modified_before:
+                continue
+        except FileNotFoundError:
+            continue
+        found.append(path)
+    return found
+
+
+def partial_folders(output_dir: Path) -> list[Path]:
+    """Return the output folder and its per-anime subfolders, where .part files are written."""
+
+    if not output_dir.is_dir():
+        return []
+    return [output_dir, *sorted(path for path in output_dir.iterdir() if path.is_dir())]
 
 
 def existing_download(output_dir: Path, title: str, *, overwrite: bool) -> Path | None:

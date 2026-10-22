@@ -174,7 +174,7 @@ anicat search KEYWORD
 | `--circuit-breaker-cooldown SECONDS` | 熔斷後的暫停時間 | `60` |
 | `--overwrite` | 覆寫已完成的同名檔案 | `False` |
 | `--no-resume` | 不沿用既有 `.part` 暫存檔 | `False` |
-| `--keep-partial` | 保留中斷或失敗集數的 `.part` 暫存檔，下次執行可接續。預設會刪除，並一併清掉本次下載資料夾內先前遺留的 `.part`。也可設定環境變數 `ANICAT_KEEP_PARTIAL=1` | `False` |
+| `--keep-partial` | 保留中斷或失敗集數的 `.part` 暫存檔，下次執行可接續。預設會刪除，並一併清掉輸出資料夾內先前遺留的 `.part`（本次沒用到的動畫資料夾只清 30 分鐘以上未寫入的）。也可設定環境變數 `ANICAT_KEEP_PARTIAL=1` | `False` |
 | `--no-progress` | 關閉進度列 | `False` |
 | `--plain-progress` | 強制使用逐行純文字進度，取代 Rich 進度列（見下方 a-shell 說明） | `False` |
 | `-v`, `--verbose` | 顯示診斷 log；`-vv` 顯示 HTTP retry/debug 細節 | `False` |
@@ -262,7 +262,7 @@ anicat https://anime1.me/category/your-category-slug --no-pacing
 
 這點在 a-shell 這類「Python 跑在 App 程序裡」的環境特別重要：以前中斷後，背景執行緒可能繼續寫入並一直開著檔案，即使在「檔案」App 刪掉影片，空間也要等 a-shell 完全關閉才會釋放。
 
-若程式被強制結束（例如系統直接終止 App），來不及收尾的 `.part` 會在下次下載到同一個動畫資料夾時自動清掉。想保留暫存檔、下次接續大檔案時，請加 `--keep-partial`。
+若程式被強制結束（例如 iOS 在背景直接終止 a-shell），來不及收尾的 `.part` 會在下一次下載結束（或被中斷）時清掉，不必是同一部動畫：本次下載的資料夾會全部清除，輸出資料夾內其他動畫資料夾則清掉 30 分鐘以上未再寫入的 `.part`，避免誤刪另一個同時執行中的下載。想保留暫存檔、下次接續大檔案時，請加 `--keep-partial`。
 
 ## 進階說明
 

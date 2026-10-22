@@ -1,3 +1,4 @@
+import os
 import threading
 import time
 import unittest
@@ -796,6 +797,39 @@ class PartialCleanupTests(unittest.TestCase):
             self.assertFalse(leftover.exists())
             self.assertTrue((anime_dir / "Demo.mp4").exists())
             self.assertEqual(service.removed_partials, [(leftover, 10)])
+
+    def test_batch_sweeps_old_leftovers_from_other_anime_folders(self):
+        with TemporaryDirectory() as directory:
+            other_dir = Path(directory) / "Other Show"
+            other_dir.mkdir()
+            killed = other_dir / "Killed Earlier.mp4.part"
+            killed.write_bytes(b"x" * 10)
+            os.utime(killed, (1000, 1000))
+            service = AniCatService(
+                download_options(output_dir=Path(directory), chunk_size=1024),
+                client_factory=GoodClient,
+            )
+
+            service.download_many([EpisodeJob(url="https://anime1.me/1")])
+
+            self.assertFalse(killed.exists())
+            self.assertEqual(service.removed_partials, [(killed, 10)])
+
+    def test_batch_keeps_recent_partials_in_other_anime_folders(self):
+        with TemporaryDirectory() as directory:
+            other_dir = Path(directory) / "Other Show"
+            other_dir.mkdir()
+            # Possibly still being written by another run in the same output folder.
+            live = other_dir / "Another Run.mp4.part"
+            live.write_bytes(b"x")
+            service = AniCatService(
+                download_options(output_dir=Path(directory), chunk_size=1024),
+                client_factory=GoodClient,
+            )
+
+            service.download_many([EpisodeJob(url="https://anime1.me/1")])
+
+            self.assertTrue(live.exists())
 
     def test_keep_partial_skips_the_leftover_sweep(self):
         with TemporaryDirectory() as directory:

@@ -244,8 +244,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=env_flag(KEEP_PARTIAL_ENV_VAR),
         help=(
             "Keep .part files of interrupted or failed episodes so a later run can resume "
-            "them. By default they are deleted, along with any leftover .part files in the "
-            "folders this run downloads into, so nothing keeps using storage. Defaults to on "
+            "them. By default they are deleted, along with leftover .part files in the output "
+            "folder (in anime folders this run does not use, only ones untouched for 30 "
+            "minutes), so nothing keeps using storage. Defaults to on "
             f"if the {KEEP_PARTIAL_ENV_VAR} environment variable is set to a truthy value."
         ),
     )

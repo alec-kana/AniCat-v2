@@ -9,12 +9,13 @@ from threading import Event, Lock, local
 from typing import Protocol
 
 from .client import Anime1Client
-from .constants import DEFAULT_BLOCKED_BACKOFF, DEFAULT_MAX_BACKOFF
+from .constants import DEFAULT_BLOCKED_BACKOFF, DEFAULT_MAX_BACKOFF, STALE_PARTIAL_AGE
 from .downloader import (
     VideoSource,
     discard_partial,
     download_episode,
     existing_download,
+    partial_folders,
     partial_path,
     sanitize_filename,
     skipped_result,
@@ -449,12 +450,18 @@ class AniCatService:
                 self.removed_partials.append((part, freed))
 
     def _sweep_partials(self) -> None:
-        """Remove .part files left in this run's folders, e.g. by an earlier killed run."""
+        """Remove .part files left in the output folder, e.g. by an earlier killed run.
+
+        Folders this run used are cleared outright; other anime folders only lose
+        files untouched for STALE_PARTIAL_AGE, since another run may be writing there.
+        """
 
         with self._partials_lock:
-            directories = sorted(self._touched_dirs)
-        for directory in directories:
-            for part in stale_partials(directory):
+            touched = set(self._touched_dirs)
+        cutoff = time.time() - STALE_PARTIAL_AGE
+        for directory in sorted(touched.union(partial_folders(self.options.output_dir))):
+            modified_before = None if directory in touched else cutoff
+            for part in stale_partials(directory, modified_before=modified_before):
                 self._remove_partial(part)
 
     def _default_client(self) -> AniCatClient:
