@@ -32,6 +32,7 @@ from .constants import (
     DEFAULT_RESOLVE_ATTEMPTS,
     DEFAULT_RETRIES,
     DEFAULT_RETRY_BUDGET,
+    DEFAULT_SEARCH_LIMIT,
     DEFAULT_STAGGER,
     KEEP_PARTIAL_ENV_VAR,
     PLAIN_PROGRESS_ENV_VAR,
@@ -302,6 +303,14 @@ def build_search_parser() -> argparse.ArgumentParser:
         nargs="?",
         help="Substring matched against anime titles, ignoring case.",
     )
+    parser.add_argument(
+        "-n",
+        "--limit",
+        type=int,
+        default=DEFAULT_SEARCH_LIMIT,
+        metavar="N",
+        help=f"Show at most N results. Default: {DEFAULT_SEARCH_LIMIT}",
+    )
     verbosity_group = parser.add_mutually_exclusive_group()
     verbosity_group.add_argument(
         "-v",
@@ -461,6 +470,9 @@ def search_main(argv: Sequence[str]) -> int:
     parser = build_search_parser()
     args = parser.parse_args(argv)
     configure_logging(verbose=args.verbose, quiet=args.quiet)
+    if args.limit < 1:
+        print("argument error: --limit must be at least 1", file=sys.stderr)
+        return EXIT_USAGE
 
     keyword = (args.keyword or "").strip() or prompt_for("? Search keyword：")
     if not keyword:
@@ -480,11 +492,11 @@ def search_main(argv: Sequence[str]) -> int:
         print(f"- No catalogue match for {keyword!r}.", file=sys.stderr)
         return EXIT_FAILURE
 
-    render_search_results(entries)
+    render_search_results(entries[: args.limit], total=len(entries))
     return EXIT_OK
 
 
-def render_search_results(entries: Sequence[AnimeEntry]) -> None:
+def render_search_results(entries: Sequence[AnimeEntry], *, total: int | None = None) -> None:
     """Render catalogue matches, keeping the URL column intact for copy/paste."""
 
     # The URL is the payload of this command, so pin its column to the widest
@@ -506,7 +518,16 @@ def render_search_results(entries: Sequence[AnimeEntry]) -> None:
     # summary line, which fights the styling the table already applies.
     console = Console(highlight=False)
     console.print(table)
-    console.print(f"[green]+[/green] {len(entries)} result(s)")
+    console.print(search_summary(len(entries), len(entries) if total is None else total))
+
+
+def search_summary(shown: int, total: int) -> str:
+    """Return the result-count line, pointing at --limit when matches were cut off."""
+
+    summary = f"[green]+[/green] {shown} result(s)"
+    if total > shown:
+        summary += f" of {total}; use --limit to see more or refine the keyword"
+    return summary
 
 
 def format_entry_meta(entry: AnimeEntry) -> str:

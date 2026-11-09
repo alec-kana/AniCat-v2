@@ -156,7 +156,7 @@ anicat search KEYWORD
 
 | 參數 | 說明 | 預設值 |
 |---|---|---|
-| `-o`, `--output DIR` | 指定輸出資料夾（每部動畫會依 `h1.page-title` 解析出的名稱各自建立子資料夾） | `./anime1` |
+| `-o`, `--output DIR` | 指定輸出資料夾（每部動畫會依 `h1.page-title` 解析出的名稱各自建立子資料夾） | `./anime` |
 | `-e`, `--episodes SPEC` | 只下載分類/季度 URL 中指定的集數，例如 `15-17` 或 `1,3,5-8`；直接輸入的單集 URL 不受此篩選影響。若指定的集數在該分類找不到，會印出警告訊息 | 不限制 |
 | `-c`, `--concurrency N` | 併發下載數。若某來源開始回 403，這是第一個該調低的參數 | `3` |
 | `--no-pacing` | 一次關掉所有節奏延遲（會覆蓋下面四個參數）。最快，但也最像機器人 | `False` |
@@ -192,6 +192,7 @@ anicat search --help
 | 參數 | 說明 |
 |---|---|
 | `KEYWORD` | 比對動畫標題的子字串，不分大小寫，也不分簡體 / 繁體 |
+| `-n`, `--limit N` | 最多顯示幾筆結果（預設 `48`），超過時會提示總筆數 |
 | `-v`, `--verbose` | 顯示診斷 log |
 | `-q`, `--quiet` | 只保留錯誤等級 log |
 
@@ -275,7 +276,7 @@ from pathlib import Path
 
 from anicat import AniCatService, DownloadOptions
 
-options = DownloadOptions(output_dir=Path("./anime1"))
+options = DownloadOptions(output_dir=Path("./anime"))
 service = AniCatService(options)
 
 episode_jobs = service.collect_episode_urls(["https://anime1.me/15651"])

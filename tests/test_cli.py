@@ -206,6 +206,38 @@ class CliTests(unittest.TestCase):
         self.assertIn("https://anime1.me/?cat=1935", output)
         self.assertIn("1 result(s)", output)
 
+    def test_search_limit_truncates_results_and_reports_total(self):
+        entries = [
+            AnimeEntry(
+                anime_id=index,
+                title=f"碧藍之海 {index}",
+                episodes="1-12",
+                year="2026",
+                season="夏",
+                subtitle_group="",
+                url=f"https://anime1.me/?cat={index}",
+            )
+            for index in (1, 2, 3)
+        ]
+        stdout = StringIO()
+
+        with (
+            patch.dict(os.environ, {"COLUMNS": "200"}),
+            patch("anicat.cli.Anime1Client"),
+            patch("anicat.cli.fetch_catalog", return_value=entries),
+            redirect_stdout(stdout),
+        ):
+            self.assertEqual(main(["search", "碧藍之海", "-n", "2"]), EXIT_OK)
+
+        output = stdout.getvalue()
+        self.assertIn("?cat=2", output)
+        self.assertNotIn("?cat=3", output)
+        self.assertIn("2 result(s) of 3", output)
+
+    def test_search_rejects_bad_limit(self):
+        with redirect_stderr(StringIO()):
+            self.assertEqual(main(["search", "x", "--limit", "0"]), EXIT_USAGE)
+
     def test_search_without_match_returns_failure(self):
         with (
             patch("anicat.cli.Anime1Client"),

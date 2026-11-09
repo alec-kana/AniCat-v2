@@ -2,7 +2,8 @@ from __future__ import annotations
 
 API_URL = "https://v.anime1.me/api"
 ANIME_LIST_URL = "https://anime1.me/animelist.json"
-DEFAULT_OUTPUT_DIR_NAME = "anime1"
+DEFAULT_OUTPUT_DIR_NAME = "anime"
+DEFAULT_SEARCH_LIMIT = 48
 
 DEFAULT_CONCURRENCY = 3
 DEFAULT_CONNECT_TIMEOUT = 10.0
